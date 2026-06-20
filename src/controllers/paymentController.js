@@ -35,7 +35,9 @@ exports.createRazorpayOrder = async (req, res) => {
       return res.json({
         id: `order_${crypto.randomBytes(6).toString('hex')}`,
         amount: amountInPaise,
-        currency: "INR"
+        currency: "INR",
+        key: 'rzp_test_mockkey',
+        is_mock: true
       });
     }
 
@@ -46,7 +48,11 @@ exports.createRazorpayOrder = async (req, res) => {
     };
 
     const rzpOrder = await razorpayInstance.orders.create(options);
-    res.json(rzpOrder);
+    res.json({
+      ...rzpOrder,
+      razorpay_order_id: rzpOrder.id,
+      key: process.env.RAZORPAY_KEY_ID
+    });
   } catch (err) {
     console.error('Error creating Razorpay order:', err);
     res.status(500).json({ error: 'Internal server error' });
@@ -59,7 +65,7 @@ exports.verifyRazorpayPayment = async (req, res) => {
     razorpay_order_id, 
     razorpay_payment_id, 
     razorpay_signature, 
-    internal_order_id 
+    order_id 
   } = req.body;
 
   try {
@@ -85,7 +91,7 @@ exports.verifyRazorpayPayment = async (req, res) => {
       const orderUpdate = await client.query(
         `UPDATE orders SET status = 'Paid', payment_method = 'Card' 
          WHERE id = $1 RETURNING shop_id, order_number, total_amount, customer_id, table_id`,
-        [internal_order_id]
+        [order_id]
       );
       
       if (orderUpdate.rows.length === 0) throw new Error('Order not found');
@@ -96,7 +102,7 @@ exports.verifyRazorpayPayment = async (req, res) => {
       await client.query(
         `INSERT INTO payments (order_id, amount, payment_method, transaction_ref, status)
          VALUES ($1, $2, 'Razorpay', $3, 'Success')`,
-        [internal_order_id, orderData.total_amount, razorpay_payment_id || 'mock_tx']
+        [order_id, orderData.total_amount, razorpay_payment_id || 'mock_tx']
       );
 
       // Get Customer phone & Table info for ticket
@@ -104,13 +110,24 @@ exports.verifyRazorpayPayment = async (req, res) => {
       const tableRes = await client.query(`SELECT table_number FROM tables WHERE id = $1`, [orderData.table_id]);
       const shopRes = await client.query(`SELECT name FROM shops WHERE id = $1`, [orderData.shop_id]);
 
+      // Get Order Items
+      const itemsRes = await client.query(
+        `SELECT oi.quantity, oi.unit_price as price, p.name 
+         FROM order_items oi 
+         LEFT JOIN products p ON oi.product_id = p.id 
+         WHERE oi.order_id = $1`, 
+        [order_id]
+      );
+
       orderDataForTicket = {
+        order_id: order_id,
         order_number: orderData.order_number,
         total_amount: orderData.total_amount,
         phone_number: custRes.rows[0]?.phone_number,
         table_number: tableRes.rows[0]?.table_number,
         shop_name: shopRes.rows[0]?.name,
-        shop_id: orderData.shop_id
+        shop_id: orderData.shop_id,
+        items: itemsRes.rows
       };
 
       await client.query('COMMIT');
@@ -124,22 +141,23 @@ exports.verifyRazorpayPayment = async (req, res) => {
     // Post-payment actions (async)
     // 1. Notify Kitchen
     socketService.notifyKitchen(orderDataForTicket.shop_id, {
-      order_id: internal_order_id,
+      order_id: order_id,
       order_number: orderDataForTicket.order_number,
       table_number: orderDataForTicket.table_number,
       message: 'New paid order received!'
     });
 
     // 2. Notify Customer (if they are listening on the order socket room)
-    socketService.updateCustomerStatus(internal_order_id, {
+    socketService.updateCustomerStatus(order_id, {
       status: 'Paid',
       message: 'Payment successful, kitchen is preparing your food.'
     });
 
-    // 3. Send WhatsApp Ticket
-    if (orderDataForTicket.phone_number) {
-      ticketService.sendWhatsAppTicket(orderDataForTicket.phone_number, orderDataForTicket).catch(err => {
-        console.error('Failed to send WhatsApp ticket post-payment:', err);
+    // 3. Send WhatsApp Ticket with Metro-Ticket Image
+    const whatsappService = require('../services/whatsappService');
+    if (whatsappService && typeof whatsappService.sendOrderConfirmation === 'function') {
+      whatsappService.sendOrderConfirmation(order_id).catch(err => {
+        console.error('Error sending WhatsApp order confirmation:', err);
       });
     }
 
@@ -152,10 +170,10 @@ exports.verifyRazorpayPayment = async (req, res) => {
 
 // 3. COD Payment Route
 exports.handleCOD = async (req, res) => {
-  const { internal_order_id } = req.body;
+  const { order_id } = req.body;
 
-  if (!internal_order_id) {
-    return res.status(400).json({ error: 'internal_order_id is required' });
+  if (!order_id) {
+    return res.status(400).json({ error: 'order_id is required' });
   }
 
   const client = await pool.connect();
@@ -165,7 +183,7 @@ exports.handleCOD = async (req, res) => {
     const orderUpdate = await client.query(
       `UPDATE orders SET status = 'To Pay', payment_method = 'Cash' 
        WHERE id = $1 RETURNING shop_id, order_number, table_id`,
-      [internal_order_id]
+      [order_id]
     );
 
     if (orderUpdate.rows.length === 0) throw new Error('Order not found');
@@ -178,7 +196,7 @@ exports.handleCOD = async (req, res) => {
 
     // Notify Admin to collect payment
     socketService.notifyAdminCOD(orderData.shop_id, {
-      order_id: internal_order_id,
+      order_id: order_id,
       order_number: orderData.order_number,
       table_number: tableNum,
       message: 'Cash payment needs to be collected.'
@@ -186,7 +204,7 @@ exports.handleCOD = async (req, res) => {
 
     // Notify Kitchen
     socketService.notifyKitchen(orderData.shop_id, {
-      order_id: internal_order_id,
+      order_id: order_id,
       order_number: orderData.order_number,
       table_number: tableNum,
       message: 'New COD order received!'

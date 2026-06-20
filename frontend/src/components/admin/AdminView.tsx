@@ -38,11 +38,7 @@ export const AdminView: React.FC<AdminViewProps> = ({
   setActiveView
 }) => {
   // Tabs management
-<<<<<<< HEAD
-  const [activeTab, setActiveTab] = useState<'products' | 'categories' | 'tables' | 'promos' | 'users' | 'reports' | 'shops'>('products');
-=======
   const [activeTab, setActiveTab] = useState<'products' | 'categories' | 'tables' | 'promos' | 'users' | 'shops' | 'reports'>('products');
->>>>>>> ff227929a91111fd3e83001011bb6efa4634d10e
 
   // Backend state for Employees & Shops
   const [employees, setEmployees] = useState<any[]>([]);

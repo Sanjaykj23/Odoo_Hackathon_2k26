@@ -102,8 +102,8 @@ exports.submitOrder = async (req, res) => {
 
     // Generate Order ID
     const randomHex = crypto.randomBytes(3).toString('hex').toLowerCase();
-    const orderId = \`o-\${Date.now().toString().slice(-6)}\${randomHex}\`;
-    const orderNumber = \`ORD-\${Date.now()}\`;
+    const orderId = `o-${Date.now().toString().slice(-6)}${randomHex}`;
+    const orderNumber = `ORD-${Date.now()}`;
 
     // Calculate totals based on items (normally we'd fetch prices from DB to avoid client spoofing)
     let subtotal = 0;
@@ -111,7 +111,7 @@ exports.submitOrder = async (req, res) => {
 
     for (const item of items) {
       const prodRes = await client.query(`SELECT price, tax FROM products WHERE id = $1`, [item.product_id]);
-      if (prodRes.rows.length === 0) throw new Error(\`Product \${item.product_id} not found\`);
+      if (prodRes.rows.length === 0) throw new Error(`Product ${item.product_id} not found`);
       
       const price = parseFloat(prodRes.rows[0].price);
       const qty = parseInt(item.quantity);
@@ -149,6 +149,14 @@ exports.submitOrder = async (req, res) => {
     }
 
     await client.query('COMMIT');
+    
+    // Trigger WhatsApp notification asynchronously
+    const whatsappService = require('../services/whatsappService');
+    if (whatsappService && typeof whatsappService.sendOrderConfirmation === 'function') {
+      whatsappService.sendOrderConfirmation(orderId).catch(err => {
+        console.error('Error sending WhatsApp order confirmation:', err);
+      });
+    }
     
     res.status(201).json({
       message: 'Order created successfully',

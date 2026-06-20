@@ -448,7 +448,7 @@ const updateKdsStatus = async (req, res) => {
   }
 
   try {
-    const orderRes = await pool.query('SELECT shop_id FROM orders WHERE id = $1', [id]);
+    const orderRes = await pool.query('SELECT shop_id, customer_id FROM orders WHERE id = $1', [id]);
     const order = orderRes.rows[0];
 
     if (!order) {
@@ -464,19 +464,33 @@ const updateKdsStatus = async (req, res) => {
     const fullOrder = await fetchFullOrder(id);
     sse.broadcast('ORDER_UPDATED', fullOrder);
 
-    // Broadcast WebSocket updates
+    // Broadcast WebSocket updates and Thank You message
     try {
       const io = socketUtil.getIO();
       const targetShopId = order.shop_id;
       if (kds_status === 'Completed') {
         io.to(`branch_${targetShopId}_pos`).emit('ORDER_READY_TO_SERVE', { orderId: id, status: 'Completed' });
         io.to(`branch_${targetShopId}_customer`).emit('ORDER_READY_TO_SERVE', { orderId: id, status: 'Completed' });
+
+        // Send Thank You WhatsApp message
+        if (order.customer_id) {
+          const custRes = await pool.query('SELECT phone_number FROM customers WHERE id = $1', [order.customer_id]);
+          const shopRes = await pool.query('SELECT name FROM shops WHERE id = $1', [order.shop_id]);
+          const phone = custRes.rows[0]?.phone_number;
+          const shopName = shopRes.rows[0]?.name;
+
+          if (phone) {
+            const ticketService = require('../services/ticketService');
+            ticketService.sendThankYouWhatsApp(phone, shopName);
+          }
+        }
+
       } else {
         io.to(`branch_${targetShopId}_pos`).emit('ORDER_STATUS_UPDATE', { orderId: id, status: kds_status });
         io.to(`branch_${targetShopId}_customer`).emit('ORDER_STATUS_UPDATE', { orderId: id, status: kds_status });
       }
     } catch (wsErr) {
-      console.error('Socket broadcast error in updateKdsStatus:', wsErr.message);
+      console.error('Socket/WhatsApp broadcast error in updateKdsStatus:', wsErr.message);
     }
 
     res.json({ message: `Order KDS status updated to ${kds_status}`, order: fullOrder });

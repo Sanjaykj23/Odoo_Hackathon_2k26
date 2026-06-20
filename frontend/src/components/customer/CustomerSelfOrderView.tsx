@@ -331,6 +331,7 @@ export const CustomerSelfOrderView: React.FC<CustomerSelfOrderViewProps> = ({ ta
       total_amount: totals.total,
       notes: notes,
       customer_name: customerName.trim() || 'Table Guest',
+      customer_phone: customerPhone.trim(),
       guest_count: guestCount
     };
 

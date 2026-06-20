@@ -137,7 +137,7 @@ async function sendOrderConfirmation(orderId) {
     const items = itemsRes.rows;
 
     // 5. Generate SVG content
-    const svgContent = generateSVGTicket(order, items, shop, table);
+    const svgContent = await generateSVGTicket(order, items, shop, table);
 
     // 6. Ensure the public tickets directory exists
     const publicDir = path.join(__dirname, '../../public');

@@ -6,14 +6,9 @@ const authController = require('../controllers/authController');
 const orderController = require('../controllers/orderController');
 const sse = require('../middleware/sse');
 const reportController = require('../controllers/reportController');
-<<<<<<< HEAD
 const paymentController = require('../controllers/paymentController');
-
-=======
 const analyticsController = require('../controllers/analyticsController');
 const shiftController = require('../controllers/shiftController');
->>>>>>> ff227929a91111fd3e83001011bb6efa4634d10e
-
 // ==========================================
 // 1. AUTHENTICATION & USER MANAGEMENT
 // ==========================================
@@ -819,53 +814,79 @@ router.get('/public/table/:qrToken', async (req, res) => {
 });
 
 router.post('/public/orders', async (req, res) => {
-  const {
-    qr_token,
-    table_id,
-    items,
-    subtotal,
-    tax,
-    discount_amount,
-    total_amount,
-    notes,
-    customer_name,
-    guest_count
-  } = req.body;
+    const {
+      qr_token,
+      table_id,
+      items,
+      subtotal,
+      tax,
+      discount_amount,
+      total_amount,
+      notes,
+      customer_name,
+      customer_phone,
+      guest_count
+    } = req.body;
 
-  if (!qr_token || !table_id || !items || items.length === 0) {
-    return res.status(400).json({ error: 'qr_token, table_id, and items are required.' });
-  }
+    if (!qr_token || !table_id || !items || items.length === 0) {
+      return res.status(400).json({ error: 'qr_token, table_id, and items are required.' });
+    }
 
-  const tableCheck = await pool.query(
-    `SELECT t.id, f.shop_id, t.table_number FROM tables t 
-     JOIN floors f ON t.floor_id = f.id 
-     WHERE t.id = $1 AND t.qr_token = $2`,
-    [table_id, qr_token]
-  );
-  if (tableCheck.rows.length === 0) {
-    return res.status(400).json({ error: 'Invalid table ID or QR token.' });
-  }
-  const { shop_id, table_number } = tableCheck.rows[0];
+    const tableCheck = await pool.query(
+      `SELECT t.id, f.shop_id, t.table_number FROM tables t 
+       JOIN floors f ON t.floor_id = f.id 
+       WHERE t.id = $1 AND t.qr_token = $2`,
+      [table_id, qr_token]
+    );
+    if (tableCheck.rows.length === 0) {
+      return res.status(400).json({ error: 'Invalid table ID or QR token.' });
+    }
+    const { shop_id, table_number } = tableCheck.rows[0];
 
-  const orderId = `o-${Date.now()}`;
-  const orderNum = `T-${Math.floor(100 + Math.random() * 900)}`;
+    const orderId = `o-${Date.now()}`;
+    const orderNum = `T-${Math.floor(100 + Math.random() * 900)}`;
 
-  const client = await pool.connect();
-  try {
-    await client.query('BEGIN');
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
 
-    const orderQuery = `
-      INSERT INTO orders (
-        id, order_number, shop_id, session_id, employee_id, customer_id, table_id, 
-        subtotal, tax, discount_amount, total_amount, payment_method, status, kds_status, notes, customer_name, guest_count
-      ) VALUES ($1, $2, $3, null, null, null, $4, $5, $6, $7, $8, null, 'Draft', 'To Cook', $9, $10, $11)
-      RETURNING *
-    `;
-    const orderRes = await client.query(orderQuery, [
-      orderId, orderNum, shop_id, table_id,
-      subtotal || 0.00, tax || 0.00, discount_amount || 0.00, total_amount || 0.00, 
-      notes || null, customer_name || 'Table Guest', guest_count || 1
-    ]);
+      // Find or create customer
+      let customerId = null;
+      if (customer_phone) {
+        const custCheck = await client.query('SELECT id FROM customers WHERE phone_number = $1', [customer_phone]);
+        if (custCheck.rows.length > 0) {
+          customerId = custCheck.rows[0].id;
+        } else {
+          const custInsert = await client.query(
+            "INSERT INTO customers (name, phone_number) VALUES ($1, $2) RETURNING id",
+            [customer_name || 'Table Guest', customer_phone]
+          );
+          customerId = custInsert.rows[0].id;
+        }
+      } else {
+        // If phone not provided (e.g., they bypassed the registration modal because table was already occupied),
+        // try to inherit the customer_id from an existing active order on this table.
+        const existingOrderCheck = await client.query(
+          "SELECT customer_id FROM orders WHERE table_id = $1 AND status != 'Completed' AND customer_id IS NOT NULL ORDER BY created_at ASC LIMIT 1",
+          [table_id]
+        );
+        if (existingOrderCheck.rows.length > 0) {
+          customerId = existingOrderCheck.rows[0].customer_id;
+        }
+      }
+
+      const orderQuery = `
+        INSERT INTO orders (
+          id, order_number, shop_id, session_id, employee_id, customer_id, table_id, 
+          subtotal, tax, discount_amount, total_amount, payment_method, status, kds_status, notes, customer_name, guest_count
+        ) VALUES ($1, $2, $3, null, null, $4, $5, $6, $7, $8, $9, null, 'Draft', 'To Cook', $10, $11, $12)
+        RETURNING *
+      `;
+      const orderRes = await client.query(orderQuery, [
+        orderId, orderNum, shop_id, customerId, table_id,
+        subtotal || 0.00, tax || 0.00, discount_amount || 0.00, total_amount || 0.00, 
+        notes || null, customer_name || 'Table Guest', guest_count || 1
+      ]);
     const createdOrder = orderRes.rows[0];
 
     const itemInsertQuery = `
@@ -908,7 +929,7 @@ router.post('/public/orders', async (req, res) => {
   }
 });
 
-<<<<<<< HEAD
+
 // Reserve Table Endpoint
 router.post('/public/tables/:qr_token/reserve', async (req, res) => {
   const { qr_token } = req.params;
@@ -1064,7 +1085,7 @@ router.get('/public/tables/:table_id/history', async (req, res) => {
 
 // Razorpay Payments
 router.post('/payments/razorpay/order', paymentController.createRazorpayOrder);
-router.post('/payments/razorpay/verify', paymentController.verifyPayment);
+router.post('/payments/razorpay/verify', paymentController.verifyRazorpayPayment);
 
 // COD Checkout Endpoint
 router.post('/public/orders/:id/checkout/cod', async (req, res) => {
@@ -1121,9 +1142,11 @@ router.post('/public/orders/:id/checkout/cod', async (req, res) => {
 
     // Trigger WhatsApp notification asynchronously
     const whatsappService = require('../services/whatsappService');
-    whatsappService.sendOrderConfirmation(id).catch(err => {
-      console.error('Error sending WhatsApp order confirmation:', err);
-    });
+    if (whatsappService && typeof whatsappService.sendOrderConfirmation === 'function') {
+      whatsappService.sendOrderConfirmation(id).catch(err => {
+        console.error('Error sending WhatsApp order confirmation:', err);
+      });
+    }
 
     res.json({ message: 'COD checkout initiated. Please pay cash to server.', order: updatedOrder });
   } catch (err) {
@@ -1137,8 +1160,6 @@ router.post('/public/orders/:id/checkout/cod', async (req, res) => {
 // ==========================================
 // 10. ANALYTICS & REPORTS
 // ==========================================
-=======
->>>>>>> ff227929a91111fd3e83001011bb6efa4634d10e
 router.get('/reports', auth.verifyToken, auth.requireRole(['SuperAdmin', 'Admin']), reportController.getReports);
 
 // Analytics endpoints

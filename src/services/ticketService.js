@@ -1,50 +1,80 @@
 const twilio = require('twilio');
+const imageGenerator = require('./imageGenerator');
 
-// Sandbox credentials for Twilio
 const accountSid = process.env.TWILIO_ACCOUNT_SID;
 const authToken = process.env.TWILIO_AUTH_TOKEN;
 const fromWhatsAppNumber = process.env.TWILIO_WHATSAPP_NUMBER || 'whatsapp:+14155238886'; // Twilio sandbox number
 
-let twilioClient;
+let client;
 if (accountSid && authToken) {
-  twilioClient = twilio(accountSid, authToken);
+  client = twilio(accountSid, authToken);
 }
 
-exports.sendWhatsAppTicket = async (customerPhone, orderData) => {
-  if (!twilioClient) {
-    console.warn('Twilio credentials not configured. Skipping WhatsApp ticket generation.');
+exports.sendBookingWhatsApp = async (toNumber, bookingDetails, ticketUrl) => {
+  if (!client) {
+    console.warn('Twilio credentials not configured. Skipping WhatsApp message.');
     return;
   }
 
-  // Ensure phone has country code. For India sandbox, you usually use +91...
-  let toPhone = customerPhone;
+  let toPhone = toNumber;
   if (!toPhone.startsWith('+')) {
-    toPhone = \`+91\${toPhone}\`; // Defaulting to +91 for this Hackathon, change as needed
+    toPhone = `+91${toPhone}`;
   }
 
-  const messageBody = \`
-🍔 *Odoo Cafe - Order Confirmed!* 🍔
-------------------------------------
-*Order #:* \${orderData.order_number}
-*Table #:* \${orderData.table_number || 'N/A'}
-*Status:* Paid
-*Total Amount:* ₹\${orderData.total_amount}
-
-Your food is being prepared. We will notify you once it's ready!
-Enjoy your meal at \${orderData.shop_name}!
-------------------------------------
-\`;
-
   try {
-    const message = await twilioClient.messages.create({
-      body: messageBody,
+    const message = await client.messages.create({
       from: fromWhatsAppNumber,
-      to: \`whatsapp:\${toPhone}\`
+      to: `whatsapp:${toPhone}`,
+      body: `Booking Confirmed!\nTable: ${bookingDetails.table || 'N/A'}\nSeats: ${bookingDetails.groupSize || 'N/A'}\nTime: ${bookingDetails.time || new Date().toLocaleTimeString()}`,
+      mediaUrl: ticketUrl ? [ticketUrl] : []
     });
-    console.log(\`WhatsApp ticket sent to \${toPhone}. SID: \${message.sid}\`);
+    console.log("Message sent:", message.sid);
     return message.sid;
   } catch (err) {
-    console.error('Error sending WhatsApp ticket:', err);
-    throw err;
+    console.error("Error sending WhatsApp:", err);
+  }
+};
+
+exports.sendThankYouWhatsApp = async (toNumber, shopName) => {
+  if (!client) return;
+
+  let toPhone = toNumber;
+  if (!toPhone.startsWith('+')) {
+    toPhone = `+91${toPhone}`;
+  }
+
+  try {
+    const message = await client.messages.create({
+      from: fromWhatsAppNumber,
+      to: `whatsapp:${toPhone}`,
+      body: `Thank you for visiting ${shopName || 'Odoo Cafe'}! We hope you enjoyed your meal. Have a wonderful day!`
+    });
+    console.log("Thank you message sent:", message.sid);
+  } catch (err) {
+    console.error("Error sending Thank You WhatsApp:", err);
+  }
+};
+
+exports.generateAndSendTicket = async (orderData) => {
+  try {
+    // 1. Generate Image
+    const fileName = await imageGenerator.generateTicketImage(orderData);
+    
+    // 2. Construct public URL
+    // Require PUBLIC_URL to be set in .env using ngrok
+    const publicUrl = process.env.PUBLIC_URL || 'http://localhost:5000';
+    const ticketUrl = `${publicUrl}/public/tickets/${fileName}`;
+
+    // 3. Send WhatsApp
+    if (orderData.phone_number) {
+      const bookingDetails = {
+        table: orderData.table_number,
+        total_amount: orderData.total_amount,
+        shop_name: orderData.shop_name
+      };
+      await exports.sendBookingWhatsApp(orderData.phone_number, bookingDetails, ticketUrl);
+    }
+  } catch (err) {
+    console.error('Error in generateAndSendTicket:', err);
   }
 };
