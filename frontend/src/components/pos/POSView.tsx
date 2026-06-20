@@ -297,7 +297,7 @@ export const POSView: React.FC<POSViewProps> = ({
 
                     <div className="flex items-center justify-between pt-1">
                       <span className="text-sm font-bold text-slate-800">
-                        ${product.price.toFixed(2)}
+                        ₹{product.price.toFixed(2)}
                       </span>
                       <div className="flex items-center gap-0.5">
                         {[...Array(5)].map((_, i) => (
@@ -383,7 +383,7 @@ export const POSView: React.FC<POSViewProps> = ({
                 <div className="flex-1 min-w-0">
                   <h4 className="text-xs font-semibold text-slate-800 truncate">{item.product.name}</h4>
                   <p className="text-[10px] text-slate-400">
-                    ${item.product.price.toFixed(2)} each
+                    ₹{item.product.price.toFixed(2)} each
                   </p>
                 </div>
 
@@ -408,7 +408,7 @@ export const POSView: React.FC<POSViewProps> = ({
 
                 <div className="text-right w-16">
                   <span className="text-xs font-bold text-slate-800">
-                    ${(item.product.price * item.quantity).toFixed(2)}
+                    ₹{(item.product.price * item.quantity).toFixed(2)}
                   </span>
                 </div>
               </div>
@@ -425,7 +425,7 @@ export const POSView: React.FC<POSViewProps> = ({
               <div className="flex items-center justify-between bg-green-50 border border-green-200 text-green-700 px-2.5 py-1.5 rounded-lg text-xs">
                 <div className="flex items-center gap-1.5 font-medium">
                   <Percent className="w-3.5 h-3.5 text-green-500" />
-                  <span>Promo Applied: {appliedPromo.code} (-{appliedPromo.discountType === 'percentage' ? `${appliedPromo.value}%` : `$${appliedPromo.value}`})</span>
+                  <span>Promo Applied: {appliedPromo.code} (-{appliedPromo.discountType === 'percentage' ? `${appliedPromo.value}%` : `₹${appliedPromo.value}`})</span>
                 </div>
                 <button onClick={removePromo} className="text-green-700 hover:text-green-900 font-bold ml-2">
                   <X className="w-3.5 h-3.5" />
@@ -460,21 +460,21 @@ export const POSView: React.FC<POSViewProps> = ({
           <div className="space-y-1.5 text-xs border-b border-dashed border-[#e2e8f0] pb-3">
             <div className="flex justify-between text-slate-500">
               <span>Subtotal</span>
-              <span className="font-semibold">${totals.subtotal.toFixed(2)}</span>
+              <span className="font-semibold">₹{totals.subtotal.toFixed(2)}</span>
             </div>
             {totals.discount > 0 && (
               <div className="flex justify-between text-green-600 font-medium">
                 <span>Discount</span>
-                <span>-${totals.discount.toFixed(2)}</span>
+                <span>-₹{totals.discount.toFixed(2)}</span>
               </div>
             )}
             <div className="flex justify-between text-slate-500">
               <span>Tax (5%)</span>
-              <span className="font-semibold">${totals.tax.toFixed(2)}</span>
+              <span className="font-semibold">₹{totals.tax.toFixed(2)}</span>
             </div>
             <div className="flex justify-between text-sm font-bold text-slate-800 pt-1">
               <span>Total Price</span>
-              <span className="text-odoo">${totals.total.toFixed(2)}</span>
+              <span className="text-odoo">₹{totals.total.toFixed(2)}</span>
             </div>
           </div>
 
@@ -516,7 +516,7 @@ export const POSView: React.FC<POSViewProps> = ({
                 {cart.map((item) => (
                   <div key={item.product.id} className="flex justify-between text-xs text-slate-600">
                     <span>{item.product.name} (x{item.quantity})</span>
-                    <span className="font-semibold">${(item.product.price * item.quantity).toFixed(2)}</span>
+                    <span className="font-semibold">₹{(item.product.price * item.quantity).toFixed(2)}</span>
                   </div>
                 ))}
               </div>
@@ -524,21 +524,21 @@ export const POSView: React.FC<POSViewProps> = ({
               <div className="border-t border-dashed border-[#e2e8f0] pt-3 space-y-1.5 text-xs text-slate-600">
                 <div className="flex justify-between">
                   <span>Subtotal</span>
-                  <span>${totals.subtotal.toFixed(2)}</span>
+                  <span>₹{totals.subtotal.toFixed(2)}</span>
                 </div>
                 {totals.discount > 0 && (
                   <div className="flex justify-between text-green-600">
                     <span>Discount</span>
-                    <span>-${totals.discount.toFixed(2)}</span>
+                    <span>-₹{totals.discount.toFixed(2)}</span>
                   </div>
                 )}
                 <div className="flex justify-between">
                   <span>Tax (5%)</span>
-                  <span>${totals.tax.toFixed(2)}</span>
+                  <span>₹{totals.tax.toFixed(2)}</span>
                 </div>
                 <div className="flex justify-between text-sm font-bold text-slate-800 pt-2 border-t border-slate-100">
                   <span>Total Paid</span>
-                  <span className="text-odoo">${totals.total.toFixed(2)}</span>
+                  <span className="text-odoo">₹{totals.total.toFixed(2)}</span>
                 </div>
               </div>
               

@@ -39,7 +39,7 @@ export interface SeatingTable {
   id: string;
   number: number;
   capacity: number;
-  status: 'Available' | 'Occupied' | 'Reserved';
+  status: 'Available' | 'Occupied' | 'Reserved' | 'Maintenance';
 }
 
 export interface PromoCode {

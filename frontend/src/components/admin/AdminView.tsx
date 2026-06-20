@@ -1,12 +1,14 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import { 
   TrendingUp, DollarSign, ShoppingBag, Plus, Trash2, 
-  Edit3, X, ToggleLeft, ToggleRight, Coffee, 
-  Utensils, Percent, Save, Calendar
+  X, ToggleLeft, ToggleRight, Coffee, 
+  Utensils, Percent, Calendar, Users, Key, Shield, User, MapPin, Phone
 } from 'lucide-react';
 import type { Product, Category, SeatingTable, PromoCode, Order } from '../../types';
 
 interface AdminViewProps {
+  token: string | null;
+  user: any;
   products: Product[];
   categories: Category[];
   tables: SeatingTable[];
@@ -20,6 +22,8 @@ interface AdminViewProps {
 }
 
 export const AdminView: React.FC<AdminViewProps> = ({
+  token,
+  user,
   products,
   categories,
   tables,
@@ -32,7 +36,11 @@ export const AdminView: React.FC<AdminViewProps> = ({
   setActiveView
 }) => {
   // Tabs management
-  const [activeTab, setActiveTab] = useState<'products' | 'categories' | 'tables' | 'promos'>('products');
+  const [activeTab, setActiveTab] = useState<'products' | 'categories' | 'tables' | 'promos' | 'users' | 'shops'>('products');
+
+  // Backend state for Employees & Shops
+  const [employees, setEmployees] = useState<any[]>([]);
+  const [shops, setShops] = useState<any[]>([]);
 
   // Stats computed from order history
   const stats = useMemo(() => {
@@ -57,6 +65,66 @@ export const AdminView: React.FC<AdminViewProps> = ({
   // Editing Category state
   const [editingCategoryId, setEditingCategoryId] = useState<string | null>(null);
   const [editingCategoryColor, setEditingCategoryColor] = useState('');
+
+  // FORM STATES: Add User Account Form
+  const [newUserName, setNewUserName] = useState('');
+  const [newUserEmail, setNewUserEmail] = useState('');
+  const [newUserPassword, setNewUserPassword] = useState('');
+  const [newUserRole, setNewUserRole] = useState('Employee');
+  const [newUserShopId, setNewUserShopId] = useState('');
+  const [userError, setUserError] = useState('');
+  const [userSuccess, setUserSuccess] = useState('');
+
+  // FORM STATES: Add Shop Form (SuperAdmin Only)
+  const [newShopName, setNewShopName] = useState('');
+  const [newShopAddress, setNewShopAddress] = useState('');
+  const [newShopPhone, setNewShopPhone] = useState('');
+  const [shopError, setShopError] = useState('');
+  const [shopSuccess, setShopSuccess] = useState('');
+
+  // Password reset state
+  const [passwordResetUserId, setPasswordResetUserId] = useState<number | null>(null);
+  const [newResetPassword, setNewResetPassword] = useState('');
+
+  // Initialize roles based on user role
+  useEffect(() => {
+    if (user?.role === 'SuperAdmin') {
+      setNewUserRole('Admin');
+    } else {
+      setNewUserRole('Employee');
+    }
+  }, [user]);
+
+  // Fetch users & shops
+  const fetchUsersAndShops = async () => {
+    if (!token) return;
+    const headers = { 'Authorization': `Bearer ${token}` };
+
+    try {
+      // Fetch employees
+      const empRes = await fetch('http://localhost:5000/api/auth/employees', { headers });
+      const empData = await empRes.json();
+      if (Array.isArray(empData)) {
+        setEmployees(empData);
+      }
+
+      // Fetch shops
+      const shopRes = await fetch('http://localhost:5000/api/shops', { headers });
+      const shopData = await shopRes.json();
+      if (Array.isArray(shopData)) {
+        setShops(shopData);
+        if (shopData.length > 0 && !newUserShopId) {
+          setNewUserShopId(shopData[0].id.toString());
+        }
+      }
+    } catch (err) {
+      console.error('Error loading admin view references:', err);
+    }
+  };
+
+  useEffect(() => {
+    fetchUsersAndShops();
+  }, [activeTab, token, user]);
 
   // Handlers for Products
   const handleAddProduct = (e: React.FormEvent) => {
@@ -139,18 +207,207 @@ export const AdminView: React.FC<AdminViewProps> = ({
     setEditingCategoryId(null);
   };
 
+  // Shop Creation Handler (SuperAdmin Only)
+  const handleCreateShop = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setShopError('');
+    setShopSuccess('');
+
+    if (!newShopName) {
+      setShopError('Shop name is required.');
+      return;
+    }
+
+    try {
+      const response = await fetch('http://localhost:5000/api/shops', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`
+        },
+        body: JSON.stringify({
+          name: newShopName,
+          address: newShopAddress,
+          phone: newShopPhone
+        })
+      });
+
+      const data = await response.json();
+      if (!response.ok) {
+        throw new Error(data.error || 'Failed to create shop.');
+      }
+
+      setShopSuccess(`Shop "${data.name}" registered successfully in database!`);
+      setNewShopName('');
+      setNewShopAddress('');
+      setNewShopPhone('');
+
+      // Reload Shops
+      await fetchUsersAndShops();
+    } catch (err: any) {
+      setShopError(err.message || 'Error occurred.');
+    }
+  };
+
+  // User Accounts Handlers
+  const handleCreateUser = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setUserError('');
+    setUserSuccess('');
+
+    if (!newUserName || !newUserEmail || !newUserPassword) {
+      setUserError('All fields are required.');
+      return;
+    }
+
+    // Role-enforcement: SuperAdmin creates Admin; Admin creates Employee/Chef
+    const roleToSend = user.role === 'SuperAdmin' ? 'Admin' : newUserRole;
+    const shopIdToSend = user.role === 'SuperAdmin' ? parseInt(newUserShopId) : user.shop_id;
+
+    if (user.role === 'SuperAdmin' && !shopIdToSend) {
+      setUserError('Please select a shop to assign this Admin.');
+      return;
+    }
+
+    const payload = {
+      name: newUserName,
+      email: newUserEmail,
+      password: newUserPassword,
+      role: roleToSend,
+      shop_id: shopIdToSend
+    };
+
+    const endpoint = roleToSend === 'Admin' 
+      ? 'http://localhost:5000/api/auth/create-admin'
+      : 'http://localhost:5000/api/auth/create-employee';
+
+    try {
+      const response = await fetch(endpoint, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`
+        },
+        body: JSON.stringify(payload)
+      });
+
+      const data = await response.json();
+      if (!response.ok) {
+        throw new Error(data.error || 'Failed to create account.');
+      }
+
+      setUserSuccess(`Account for ${data.name} (${data.role}) registered in database successfully!`);
+      
+      // Clear form
+      setNewUserName('');
+      setNewUserEmail('');
+      setNewUserPassword('');
+      
+      // Update employee list
+      const headers = { 'Authorization': `Bearer ${token}` };
+      const empRes = await fetch('http://localhost:5000/api/auth/employees', { headers });
+      const empData = await empRes.json();
+      if (Array.isArray(empData)) setEmployees(empData);
+    } catch (err: any) {
+      setUserError(err.message || 'Error occurred.');
+    }
+  };
+
+  const handleToggleArchiveUser = async (empId: number) => {
+    try {
+      const response = await fetch(`http://localhost:5000/api/auth/employees/${empId}/archive`, {
+        method: 'PUT',
+        headers: { 'Authorization': `Bearer ${token}` }
+      });
+
+      if (response.ok) {
+        setEmployees(prev => prev.map(emp => 
+          emp.id === empId ? { ...emp, is_active: !emp.is_active } : emp
+        ));
+      } else {
+        const data = await response.json();
+        alert(data.error || 'Failed to archive user.');
+      }
+    } catch (err) {
+      console.error('Error toggling archive:', err);
+    }
+  };
+
+  const handleDeleteUser = async (empId: number) => {
+    const confirmDelete = window.confirm('Are you sure you want to delete this user account? This will permanently remove them from the database.');
+    if (!confirmDelete) return;
+
+    try {
+      const response = await fetch(`http://localhost:5000/api/auth/employees/${empId}`, {
+        method: 'DELETE',
+        headers: { 'Authorization': `Bearer ${token}` }
+      });
+
+      if (response.ok) {
+        setEmployees(prev => prev.filter(emp => emp.id !== empId));
+      } else {
+        const data = await response.json();
+        alert(data.error || 'Failed to delete user.');
+      }
+    } catch (err) {
+      console.error('Error deleting user:', err);
+    }
+  };
+
+  const handleResetPassword = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!passwordResetUserId || !newResetPassword) return;
+
+    try {
+      const response = await fetch(`http://localhost:5000/api/auth/employees/${passwordResetUserId}/password`, {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`
+        },
+        body: JSON.stringify({ newPassword: newResetPassword })
+      });
+
+      const data = await response.json();
+      if (response.ok) {
+        alert('Password updated successfully!');
+        setPasswordResetUserId(null);
+        setNewResetPassword('');
+      } else {
+        alert(data.error || 'Failed to reset password.');
+      }
+    } catch (err) {
+      console.error('Error resetting password:', err);
+    }
+  };
+
+  // Compile active tab controllers
+  const tabItems = [
+    { id: 'products', label: 'Product Catalog', icon: Coffee },
+    { id: 'categories', label: 'Category Mappings', icon: Utensils },
+    { id: 'tables', label: 'Table Arrangements', icon: Calendar },
+    { id: 'promos', label: 'Promos & Codes', icon: Percent },
+    { id: 'users', label: 'User & Employees', icon: Users },
+  ];
+
+  if (user?.role === 'SuperAdmin') {
+    tabItems.push({ id: 'shops', label: 'Shops & Branches', icon: Shield });
+  }
+
   return (
     <div className="h-[calc(100vh-64px)] overflow-y-auto bg-[#f8fafc] p-6 space-y-6">
       
       {/* HEADER SECTION */}
       <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 bg-white p-5 rounded-2xl border border-[#e2e8f0]">
         <div>
-          <h1 className="text-xl font-bold text-slate-800">Enterprise Administration Portal</h1>
+          <h1 className="text-xl font-bold text-slate-800">
+            {user?.role === 'SuperAdmin' ? 'Super Admin Platform Portal' : 'Store Administrator Portal'}
+          </h1>
           <p className="text-xs text-slate-400">Configure catalog options, seating tables, active promotional rates, and monitor financials.</p>
         </div>
         <button
           onClick={() => setActiveView('products')}
-          className="text-xs px-4 py-2 bg-slate-800 text-white font-bold rounded-xl hover:bg-slate-700 transition-all shadow-sm"
+          className="text-xs px-4 py-2 bg-slate-800 text-white font-bold rounded-xl hover:bg-slate-700 transition-all shadow-sm cursor-pointer"
         >
           Return to POS Terminal
         </button>
@@ -158,7 +415,6 @@ export const AdminView: React.FC<AdminViewProps> = ({
 
       {/* METRICS SUMMARY CARDS */}
       <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-        {/* Total Orders Card */}
         <div className="bg-white border border-[#e2e8f0] p-5 rounded-2xl flex items-center gap-4 shadow-sm relative overflow-hidden">
           <div className="p-3 bg-blue-50 border border-blue-100 rounded-xl text-blue-600">
             <ShoppingBag className="w-5 h-5" />
@@ -169,46 +425,39 @@ export const AdminView: React.FC<AdminViewProps> = ({
           </div>
         </div>
 
-        {/* Revenue Card */}
         <div className="bg-white border border-[#e2e8f0] p-5 rounded-2xl flex items-center gap-4 shadow-sm relative overflow-hidden">
           <div className="p-3 bg-green-50 border border-green-100 rounded-xl text-green-600">
             <DollarSign className="w-5 h-5" />
           </div>
           <div>
             <span className="text-xs font-semibold text-slate-400 uppercase tracking-wider">Total Revenue</span>
-            <p className="text-2xl font-bold text-slate-800 mt-0.5">${stats.revenue.toFixed(2)}</p>
+            <p className="text-2xl font-bold text-slate-800 mt-0.5">₹{stats.revenue.toFixed(2)}</p>
           </div>
         </div>
 
-        {/* Average Order Value Card */}
         <div className="bg-white border border-[#e2e8f0] p-5 rounded-2xl flex items-center gap-4 shadow-sm relative overflow-hidden">
           <div className="p-3 bg-purple-50 border border-purple-100 rounded-xl text-purple-600">
             <TrendingUp className="w-5 h-5" />
           </div>
           <div>
             <span className="text-xs font-semibold text-slate-400 uppercase tracking-wider">Average Order Value</span>
-            <p className="text-2xl font-bold text-slate-800 mt-0.5">${stats.aov.toFixed(2)}</p>
+            <p className="text-2xl font-bold text-slate-800 mt-0.5">₹{stats.aov.toFixed(2)}</p>
           </div>
         </div>
       </div>
 
       {/* TABS CONTROLLERS */}
       <div className="flex border-b border-[#e2e8f0]">
-        {[
-          { id: 'products', label: 'Product Catalog', icon: Coffee },
-          { id: 'categories', label: 'Category Mappings', icon: Utensils },
-          { id: 'tables', label: 'Table Arrangements', icon: Calendar },
-          { id: 'promos', label: 'Promos & Codes', icon: Percent },
-        ].map(tab => {
+        {tabItems.map(tab => {
           const IconC = tab.icon;
           const isSel = activeTab === tab.id;
           return (
             <button
               key={tab.id}
               onClick={() => setActiveTab(tab.id as any)}
-              className={`flex items-center gap-2 px-5 py-3 border-b-2 font-bold text-xs tracking-wide transition-all ${
+              className={`flex items-center gap-2 px-5 py-3 border-b-2 font-bold text-xs tracking-wide transition-all cursor-pointer ${
                 isSel
-                  ? 'border-odoo text-odoo'
+                  ? 'border-purple-600 text-purple-700'
                   : 'border-transparent text-slate-400 hover:text-slate-600 hover:border-slate-300'
               }`}
             >
@@ -225,7 +474,6 @@ export const AdminView: React.FC<AdminViewProps> = ({
         {/* PRODUCTS SHEET */}
         {activeTab === 'products' && (
           <div className="divide-y divide-[#e2e8f0]">
-            {/* Add Product Inline Form */}
             <form onSubmit={handleAddProduct} className="p-5 bg-slate-50/50 grid grid-cols-1 md:grid-cols-5 gap-3.5 items-end">
               <div>
                 <label className="block text-[10px] uppercase tracking-wider font-bold text-slate-500 mb-1">Product Name</label>
@@ -235,19 +483,19 @@ export const AdminView: React.FC<AdminViewProps> = ({
                   placeholder="e.g. Samosa Chaat"
                   value={newProdName}
                   onChange={(e) => setNewProdName(e.target.value)}
-                  className="w-full text-xs px-3 py-2 bg-white border border-[#e2e8f0] rounded-xl focus:outline-none focus:ring-1 focus:ring-odoo focus:border-odoo text-slate-800"
+                  className="w-full text-xs px-3 py-2 bg-white border border-[#e2e8f0] rounded-xl focus:outline-none focus:ring-1 focus:ring-purple-500 focus:border-purple-500 text-slate-800"
                 />
               </div>
               <div>
-                <label className="block text-[10px] uppercase tracking-wider font-bold text-slate-500 mb-1">Price ($)</label>
+                <label className="block text-[10px] uppercase tracking-wider font-bold text-slate-500 mb-1">Price (₹)</label>
                 <input
                   type="number"
                   step="0.01"
                   required
-                  placeholder="e.g. 5.99"
+                  placeholder="e.g. 599"
                   value={newProdPrice}
                   onChange={(e) => setNewProdPrice(e.target.value)}
-                  className="w-full text-xs px-3 py-2 bg-white border border-[#e2e8f0] rounded-xl focus:outline-none focus:ring-1 focus:ring-odoo focus:border-odoo text-slate-800"
+                  className="w-full text-xs px-3 py-2 bg-white border border-[#e2e8f0] rounded-xl focus:outline-none focus:ring-1 focus:ring-purple-500 focus:border-purple-500 text-slate-800"
                 />
               </div>
               <div>
@@ -255,7 +503,7 @@ export const AdminView: React.FC<AdminViewProps> = ({
                 <select
                   value={newProdCategory}
                   onChange={(e) => setNewProdCategory(e.target.value)}
-                  className="w-full text-xs px-3 py-2 bg-white border border-[#e2e8f0] rounded-xl focus:outline-none focus:ring-1 focus:ring-odoo focus:border-odoo text-slate-800"
+                  className="w-full text-xs px-3 py-2 bg-white border border-[#e2e8f0] rounded-xl focus:outline-none focus:ring-1 focus:ring-purple-500 focus:border-purple-500 text-slate-800"
                 >
                   <option value="meal">Meals</option>
                   <option value="beverages">Beverages</option>
@@ -270,18 +518,17 @@ export const AdminView: React.FC<AdminViewProps> = ({
                   placeholder="e.g. India"
                   value={newProdCountry}
                   onChange={(e) => setNewProdCountry(e.target.value)}
-                  className="w-full text-xs px-3 py-2 bg-white border border-[#e2e8f0] rounded-xl focus:outline-none focus:ring-1 focus:ring-odoo focus:border-odoo text-slate-800"
+                  className="w-full text-xs px-3 py-2 bg-white border border-[#e2e8f0] rounded-xl focus:outline-none focus:ring-1 focus:ring-purple-500 focus:border-purple-500 text-slate-800"
                 />
               </div>
               <button
                 type="submit"
-                className="w-full text-xs py-2 bg-slate-800 hover:bg-slate-700 text-white font-bold rounded-xl transition-all shadow-sm flex items-center justify-center gap-1.5"
+                className="w-full text-xs py-2 bg-slate-800 hover:bg-slate-700 text-white font-bold rounded-xl transition-all shadow-sm flex items-center justify-center gap-1.5 cursor-pointer"
               >
                 <Plus className="w-3.5 h-3.5" /> Add Product
               </button>
             </form>
 
-            {/* Products Table */}
             <div className="overflow-x-auto">
               <table className="w-full text-left border-collapse text-xs">
                 <thead>
@@ -297,7 +544,7 @@ export const AdminView: React.FC<AdminViewProps> = ({
                 <tbody className="divide-y divide-slate-100">
                   {products.map(product => (
                     <tr key={product.id} className="hover:bg-slate-50/50">
-                      <td className="p-4 flex items-center gap-3">
+                       <td className="p-4 flex items-center gap-3">
                         <img 
                           src={product.image} 
                           alt={product.name} 
@@ -314,12 +561,12 @@ export const AdminView: React.FC<AdminViewProps> = ({
                         </span>
                       </td>
                       <td className="p-4 font-semibold text-slate-800">
-                        ${product.price.toFixed(2)}
+                        ₹{product.price.toFixed(2)}
                       </td>
                       <td className="p-4">
                         <button
                           onClick={() => toggleAvailability(product.id)}
-                          className={`flex items-center gap-1.5 text-xs font-semibold ${
+                          className={`flex items-center gap-1.5 text-xs font-semibold cursor-pointer ${
                             product.available ? 'text-green-600' : 'text-red-500'
                           }`}
                         >
@@ -343,7 +590,7 @@ export const AdminView: React.FC<AdminViewProps> = ({
                       <td className="p-4 text-right">
                         <button
                           onClick={() => handleDeleteProduct(product.id)}
-                          className="p-1.5 text-red-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors inline-flex"
+                          className="p-1.5 text-red-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors inline-flex cursor-pointer"
                         >
                           <Trash2 className="w-4 h-4" />
                         </button>
@@ -360,8 +607,6 @@ export const AdminView: React.FC<AdminViewProps> = ({
         {activeTab === 'categories' && (
           <div className="p-5">
             <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-              
-              {/* Category Mappings Table */}
               <div className="border border-[#e2e8f0] rounded-xl overflow-hidden">
                 <table className="w-full text-left border-collapse text-xs">
                   <thead className="bg-slate-50 border-b border-[#e2e8f0] text-slate-400 font-bold uppercase tracking-wider">
@@ -403,13 +648,13 @@ export const AdminView: React.FC<AdminViewProps> = ({
                             <div className="flex justify-end gap-1.5">
                               <button
                                 onClick={() => handleSaveCategoryColor(cat.id)}
-                                className="p-1 bg-green-50 border border-green-200 text-green-600 rounded-lg hover:bg-green-100"
+                                className="p-1 bg-green-50 border border-green-200 text-green-600 rounded-lg hover:bg-green-100 cursor-pointer"
                               >
-                                <Save className="w-3.5 h-3.5" />
+                                <X className="w-3.5 h-3.5" />
                               </button>
                               <button
                                 onClick={() => setEditingCategoryId(null)}
-                                className="p-1 bg-red-50 border border-red-200 text-red-500 rounded-lg hover:bg-red-100"
+                                className="p-1 bg-red-50 border border-red-200 text-red-500 rounded-lg hover:bg-red-100 cursor-pointer"
                               >
                                 <X className="w-3.5 h-3.5" />
                               </button>
@@ -420,9 +665,9 @@ export const AdminView: React.FC<AdminViewProps> = ({
                                 setEditingCategoryId(cat.id);
                                 setEditingCategoryColor(cat.color);
                               }}
-                              className="text-xs font-semibold text-odoo hover:underline flex items-center gap-1 ml-auto"
+                              className="text-xs font-semibold text-purple-700 hover:underline flex items-center gap-1 ml-auto cursor-pointer"
                             >
-                              <Edit3 className="w-3.5 h-3.5" /> Change Color
+                              Change Color
                             </button>
                           )}
                         </td>
@@ -432,7 +677,6 @@ export const AdminView: React.FC<AdminViewProps> = ({
                 </table>
               </div>
 
-              {/* Informative description Box */}
               <div className="bg-slate-50 border border-[#e2e8f0] p-5 rounded-xl space-y-3">
                 <h3 className="font-bold text-slate-800 text-sm">Theme Settings Overview</h3>
                 <p className="text-slate-500 text-xs leading-relaxed">
@@ -443,12 +687,11 @@ export const AdminView: React.FC<AdminViewProps> = ({
                   <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Accent Palette Hint</span>
                   <div className="flex gap-2 mt-2">
                     <span className="w-6 h-6 rounded-full bg-[#714B67]" title="Odoo Aubergine"/>
-                    <span className="w-6 h-6 rounded-full bg-[#1e3a8a]" title="Navy Corporate"/>
-                    <span className="w-6 h-6 rounded-full bg-[#f8fafc]" title="Slate Base"/>
+                    <span className="w-6 h-6 rounded-full bg-[#0369a1]" title="Sky Corporate"/>
+                    <span className="w-6 h-6 rounded-full bg-[#15803d]" title="Forest Base"/>
                   </div>
                 </div>
               </div>
-
             </div>
           </div>
         )}
@@ -462,6 +705,7 @@ export const AdminView: React.FC<AdminViewProps> = ({
                   switch (status) {
                     case 'Occupied': return 'border-red-200 bg-red-50 text-red-700';
                     case 'Reserved': return 'border-amber-200 bg-amber-50 text-amber-700';
+                    case 'Maintenance': return 'border-slate-300 bg-slate-100 text-slate-500';
                     default: return 'border-green-200 bg-green-50 text-green-700';
                   }
                 };
@@ -494,6 +738,7 @@ export const AdminView: React.FC<AdminViewProps> = ({
                         <option value="Available">Available</option>
                         <option value="Occupied">Occupied</option>
                         <option value="Reserved">Reserved</option>
+                        <option value="Maintenance">Maintenance</option>
                       </select>
                     </div>
                   </div>
@@ -506,8 +751,6 @@ export const AdminView: React.FC<AdminViewProps> = ({
         {/* PROMOS SHEET */}
         {activeTab === 'promos' && (
           <div className="divide-y divide-[#e2e8f0]">
-            
-            {/* Add Promo Code Form */}
             <form onSubmit={handleAddPromo} className="p-5 bg-slate-50/50 grid grid-cols-1 md:grid-cols-4 gap-3.5 items-end">
               <div>
                 <label className="block text-[10px] uppercase tracking-wider font-bold text-slate-500 mb-1">Promo Code</label>
@@ -517,7 +760,7 @@ export const AdminView: React.FC<AdminViewProps> = ({
                   placeholder="e.g. CAFE50"
                   value={newPromoCode}
                   onChange={(e) => setNewPromoCode(e.target.value)}
-                  className="w-full text-xs px-3 py-2 bg-white border border-[#e2e8f0] rounded-xl focus:outline-none focus:ring-1 focus:ring-odoo focus:border-odoo text-slate-800"
+                  className="w-full text-xs px-3 py-2 bg-white border border-[#e2e8f0] rounded-xl focus:outline-none focus:ring-1 focus:ring-purple-500 focus:border-purple-500 text-slate-800"
                 />
               </div>
               <div>
@@ -525,7 +768,7 @@ export const AdminView: React.FC<AdminViewProps> = ({
                 <select
                   value={newPromoType}
                   onChange={(e) => setNewPromoType(e.target.value as any)}
-                  className="w-full text-xs px-3 py-2 bg-white border border-[#e2e8f0] rounded-xl focus:outline-none focus:ring-1 focus:ring-odoo focus:border-odoo text-slate-800"
+                  className="w-full text-xs px-3 py-2 bg-white border border-[#e2e8f0] rounded-xl focus:outline-none focus:ring-1 focus:ring-purple-500 focus:border-purple-500 text-slate-800"
                 >
                   <option value="percentage">Percentage (%)</option>
                   <option value="fixed">Fixed Cash ($)</option>
@@ -540,18 +783,17 @@ export const AdminView: React.FC<AdminViewProps> = ({
                   placeholder="e.g. 10"
                   value={newPromoValue}
                   onChange={(e) => setNewPromoValue(e.target.value)}
-                  className="w-full text-xs px-3 py-2 bg-white border border-[#e2e8f0] rounded-xl focus:outline-none focus:ring-1 focus:ring-odoo focus:border-odoo text-slate-800"
+                  className="w-full text-xs px-3 py-2 bg-white border border-[#e2e8f0] rounded-xl focus:outline-none focus:ring-1 focus:ring-purple-500 focus:border-purple-500 text-slate-800"
                 />
               </div>
               <button
                 type="submit"
-                className="w-full text-xs py-2 bg-slate-800 hover:bg-slate-700 text-white font-bold rounded-xl transition-all shadow-sm flex items-center justify-center gap-1.5"
+                className="w-full text-xs py-2 bg-slate-800 hover:bg-slate-700 text-white font-bold rounded-xl transition-all shadow-sm flex items-center justify-center gap-1.5 cursor-pointer"
               >
                 <Plus className="w-3.5 h-3.5" /> Add Promo Code
               </button>
             </form>
 
-            {/* Promo Codes Table */}
             <div className="overflow-x-auto">
               <table className="w-full text-left border-collapse text-xs">
                 <thead className="bg-slate-50 border-b border-[#e2e8f0] text-slate-400 font-bold uppercase tracking-wider">
@@ -573,12 +815,12 @@ export const AdminView: React.FC<AdminViewProps> = ({
                         {promo.discountType}
                       </td>
                       <td className="p-4 font-semibold text-slate-800">
-                        {promo.discountType === 'percentage' ? `${promo.value}%` : `$${promo.value.toFixed(2)}`}
+                        {promo.discountType === 'percentage' ? `${promo.value}%` : `₹${promo.value.toFixed(2)}`}
                       </td>
                       <td className="p-4">
                         <button
                           onClick={() => togglePromo(promo.code)}
-                          className={`flex items-center gap-1.5 text-xs font-semibold ${
+                          className={`flex items-center gap-1.5 text-xs font-semibold cursor-pointer ${
                             promo.active ? 'text-green-600' : 'text-slate-400'
                           }`}
                         >
@@ -596,10 +838,348 @@ export const AdminView: React.FC<AdminViewProps> = ({
                       <td className="p-4 text-right">
                         <button
                           onClick={() => handleDeletePromo(promo.code)}
-                          className="p-1.5 text-red-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors inline-flex"
+                          className="p-1.5 text-red-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors inline-flex cursor-pointer"
                         >
                           <Trash2 className="w-4 h-4" />
                         </button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        )}
+
+        {/* USER AND EMPLOYEE ACCOUNTS SHEET */}
+        {activeTab === 'users' && (
+          <div className="divide-y divide-[#e2e8f0]">
+            
+            {/* Create Account Form */}
+            <div className="p-6 bg-slate-50/50">
+              <h3 className="text-sm font-bold text-slate-800 flex items-center gap-2 mb-4">
+                <Users className="w-4 h-4 text-purple-600" />
+                {user?.role === 'SuperAdmin' ? 'Register New Shop Admin Account' : 'Register New Cashier / Chef'}
+              </h3>
+
+              {userError && (
+                <div className="mb-4 bg-red-50 border border-red-200 text-red-600 p-3 rounded-xl text-xs font-semibold">
+                  {userError}
+                </div>
+              )}
+              {userSuccess && (
+                <div className="mb-4 bg-green-50 border border-green-200 text-green-700 p-3 rounded-xl text-xs font-semibold">
+                  {userSuccess}
+                </div>
+              )}
+
+              <form onSubmit={handleCreateUser} className="grid grid-cols-1 md:grid-cols-5 gap-4 items-end">
+                <div>
+                  <label className="block text-[10px] uppercase tracking-wider font-bold text-slate-500 mb-1">Full Name</label>
+                  <input
+                    type="text"
+                    required
+                    placeholder="e.g. John Doe"
+                    value={newUserName}
+                    onChange={(e) => setNewUserName(e.target.value)}
+                    className="w-full text-xs px-3 py-2 bg-white border border-[#e2e8f0] rounded-xl focus:outline-none focus:ring-1 focus:ring-purple-500 focus:border-purple-500 text-slate-800"
+                  />
+                </div>
+                <div>
+                  <label className="block text-[10px] uppercase tracking-wider font-bold text-slate-500 mb-1">Email Address</label>
+                  <input
+                    type="email"
+                    required
+                    placeholder="e.g. john@odoocafe.com"
+                    value={newUserEmail}
+                    onChange={(e) => setNewUserEmail(e.target.value)}
+                    className="w-full text-xs px-3 py-2 bg-white border border-[#e2e8f0] rounded-xl focus:outline-none focus:ring-1 focus:ring-purple-500 focus:border-purple-500 text-slate-800"
+                  />
+                </div>
+                <div>
+                  <label className="block text-[10px] uppercase tracking-wider font-bold text-slate-500 mb-1">Password</label>
+                  <input
+                    type="password"
+                    required
+                    placeholder="e.g. secure123"
+                    value={newUserPassword}
+                    onChange={(e) => setNewUserPassword(e.target.value)}
+                    className="w-full text-xs px-3 py-2 bg-white border border-[#e2e8f0] rounded-xl focus:outline-none focus:ring-1 focus:ring-purple-500 focus:border-purple-500 text-slate-800"
+                  />
+                </div>
+
+                {user?.role === 'SuperAdmin' ? (
+                  <>
+                    <div>
+                      <label className="block text-[10px] uppercase tracking-wider font-bold text-slate-500 mb-1">Account Role</label>
+                      <select
+                        disabled
+                        value="Admin"
+                        className="w-full text-xs px-3 py-2 bg-slate-100 border border-[#e2e8f0] rounded-xl text-slate-500"
+                      >
+                        <option value="Admin">Shop Admin</option>
+                      </select>
+                    </div>
+                    <div>
+                      <label className="block text-[10px] uppercase tracking-wider font-bold text-slate-500 mb-1">Assign Shop</label>
+                      <select
+                        value={newUserShopId}
+                        onChange={(e) => setNewUserShopId(e.target.value)}
+                        className="w-full text-xs px-3 py-2 bg-white border border-[#e2e8f0] rounded-xl focus:outline-none focus:ring-1 focus:ring-purple-500 focus:border-purple-500 text-slate-800"
+                      >
+                        <option value="">-- Select Branch Shop --</option>
+                        {shops.map(s => (
+                          <option key={s.id} value={s.id}>{s.name}</option>
+                        ))}
+                      </select>
+                    </div>
+                  </>
+                ) : (
+                  <>
+                    <div>
+                      <label className="block text-[10px] uppercase tracking-wider font-bold text-slate-500 mb-1">Account Role</label>
+                      <select
+                        value={newUserRole}
+                        onChange={(e) => setNewUserRole(e.target.value)}
+                        className="w-full text-xs px-3 py-2 bg-white border border-[#e2e8f0] rounded-xl focus:outline-none focus:ring-1 focus:ring-purple-500 focus:border-purple-500 text-slate-800"
+                      >
+                        <option value="Employee">Cashier (Employee)</option>
+                        <option value="Chef">Kitchen Chef</option>
+                      </select>
+                    </div>
+                    <div className="text-slate-500 text-xs py-2 px-1 font-semibold leading-normal">
+                      Shop: <span className="text-slate-800 font-bold">{user?.shop_name || 'My Cafe Shop'}</span>
+                    </div>
+                  </>
+                )}
+
+                <div className="md:col-span-5 flex justify-end">
+                  <button
+                    type="submit"
+                    className="px-5 py-2.5 bg-purple-600 hover:bg-purple-700 text-white font-bold text-xs rounded-xl transition-all shadow-sm flex items-center gap-1.5 cursor-pointer"
+                  >
+                    <Plus className="w-3.5 h-3.5" /> Register Account
+                  </button>
+                </div>
+              </form>
+            </div>
+
+            {/* Password Reset Modal Box */}
+            {passwordResetUserId && (
+              <div className="p-6 bg-purple-50/50 border-b border-purple-100 flex items-center justify-between gap-4">
+                <form onSubmit={handleResetPassword} className="flex items-end gap-3 flex-1 max-w-lg">
+                  <div className="flex-1">
+                    <label className="block text-[9px] uppercase tracking-wider font-bold text-purple-600 mb-1">Reset Password for User #{passwordResetUserId}</label>
+                    <input
+                      type="password"
+                      required
+                      placeholder="Enter new password"
+                      value={newResetPassword}
+                      onChange={(e) => setNewResetPassword(e.target.value)}
+                      className="w-full text-xs px-3 py-1.5 bg-white border border-purple-200 rounded-lg focus:outline-none focus:ring-1 focus:ring-purple-500 text-slate-800"
+                    />
+                  </div>
+                  <button
+                    type="submit"
+                    className="px-4 py-1.5 bg-purple-600 text-white text-xs font-bold rounded-lg hover:bg-purple-700 transition-colors cursor-pointer"
+                  >
+                    Save Password
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => { setPasswordResetUserId(null); setNewResetPassword(''); }}
+                    className="px-3 py-1.5 bg-slate-200 text-slate-700 text-xs font-semibold rounded-lg hover:bg-slate-300 transition-colors cursor-pointer"
+                  >
+                    Cancel
+                  </button>
+                </form>
+              </div>
+            )}
+
+            {/* Accounts Directory */}
+            <div className="overflow-x-auto">
+              <table className="w-full text-left border-collapse text-xs">
+                <thead>
+                  <tr className="bg-slate-50 border-b border-[#e2e8f0] text-slate-400 font-bold uppercase tracking-wider">
+                    <th className="p-4">Name</th>
+                    <th className="p-4">Email</th>
+                    <th className="p-4">Role</th>
+                    <th className="p-4">Assigned Location</th>
+                    <th className="p-4">Status</th>
+                    <th className="p-4 text-right">Actions</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-100">
+                  {employees.map(emp => {
+                    const isSuperUser = emp.role === 'SuperAdmin';
+                    return (
+                      <tr key={emp.id} className="hover:bg-slate-50/50">
+                        <td className="p-4 font-bold text-slate-800 flex items-center gap-2">
+                          {isSuperUser ? (
+                            <Shield className="w-3.5 h-3.5 text-amber-500" />
+                          ) : emp.role === 'Admin' ? (
+                            <Shield className="w-3.5 h-3.5 text-purple-500" />
+                          ) : (
+                            <User className="w-3.5 h-3.5 text-slate-400" />
+                          )}
+                          {emp.name}
+                        </td>
+                        <td className="p-4 text-slate-600">{emp.email}</td>
+                        <td className="p-4">
+                          <span className={`px-2.5 py-0.5 rounded-full text-[9px] font-bold tracking-wider uppercase border ${
+                            emp.role === 'SuperAdmin' ? 'bg-amber-50 text-amber-700 border-amber-200' :
+                            emp.role === 'Admin' ? 'bg-purple-50 text-purple-700 border-purple-200' :
+                            emp.role === 'Chef' ? 'bg-green-50 text-green-700 border-green-200' :
+                            'bg-sky-50 text-sky-700 border-sky-200'
+                          }`}>
+                            {emp.role}
+                          </span>
+                        </td>
+                        <td className="p-4 font-medium text-slate-700">
+                          {isSuperUser ? 'Global System' : emp.shop_name || `Shop #${emp.shop_id}`}
+                        </td>
+                        <td className="p-4">
+                          <button
+                            disabled={isSuperUser}
+                            onClick={() => handleToggleArchiveUser(emp.id)}
+                            className={`flex items-center gap-1.5 text-xs font-semibold ${
+                              isSuperUser ? 'opacity-50 cursor-not-allowed text-slate-400' :
+                              emp.is_active ? 'text-green-600 cursor-pointer' : 'text-slate-400 cursor-pointer'
+                            }`}
+                          >
+                            {emp.is_active ? (
+                              <>
+                                <ToggleRight className="w-5 h-5 text-green-500" /> Active
+                              </>
+                            ) : (
+                              <>
+                                <ToggleLeft className="w-5 h-5 text-slate-300" /> Archived
+                              </>
+                            )}
+                          </button>
+                        </td>
+                        <td className="p-4 text-right space-x-1.5">
+                          <button
+                            onClick={() => setPasswordResetUserId(emp.id)}
+                            title="Reset Password"
+                            className="p-1.5 text-slate-500 hover:text-slate-700 hover:bg-slate-100 rounded-lg transition-colors inline-flex cursor-pointer"
+                          >
+                            <Key className="w-3.5 h-3.5" />
+                          </button>
+
+                          {user?.role === 'SuperAdmin' && !isSuperUser && (
+                            <button
+                              onClick={() => handleDeleteUser(emp.id)}
+                              title="Delete Account"
+                              className="p-1.5 text-red-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors inline-flex cursor-pointer"
+                            >
+                              <Trash2 className="w-3.5 h-3.5" />
+                            </button>
+                          )}
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+
+          </div>
+        )}
+
+        {/* SHOPS MANAGEMENT SHEET (SuperAdmin Only) */}
+        {activeTab === 'shops' && user?.role === 'SuperAdmin' && (
+          <div className="divide-y divide-[#e2e8f0]">
+            
+            {/* Create Shop Form */}
+            <div className="p-6 bg-slate-50/50">
+              <h3 className="text-sm font-bold text-slate-800 flex items-center gap-2 mb-4">
+                <MapPin className="w-4 h-4 text-purple-600" />
+                Register New Branch / Shop
+              </h3>
+
+              {shopError && (
+                <div className="mb-4 bg-red-50 border border-red-200 text-red-600 p-3 rounded-xl text-xs font-semibold">
+                  {shopError}
+                </div>
+              )}
+              {shopSuccess && (
+                <div className="mb-4 bg-green-50 border border-green-200 text-green-700 p-3 rounded-xl text-xs font-semibold">
+                  {shopSuccess}
+                </div>
+              )}
+
+              <form onSubmit={handleCreateShop} className="grid grid-cols-1 md:grid-cols-4 gap-4 items-end">
+                <div>
+                  <label className="block text-[10px] uppercase tracking-wider font-bold text-slate-500 mb-1">Shop/Branch Name</label>
+                  <input
+                    type="text"
+                    required
+                    placeholder="e.g. Odoo Cafe Downtown"
+                    value={newShopName}
+                    onChange={(e) => setNewShopName(e.target.value)}
+                    className="w-full text-xs px-3 py-2 bg-white border border-[#e2e8f0] rounded-xl focus:outline-none focus:ring-1 focus:ring-purple-500 focus:border-purple-500 text-slate-800"
+                  />
+                </div>
+                <div>
+                  <label className="block text-[10px] uppercase tracking-wider font-bold text-slate-500 mb-1">Shop Address</label>
+                  <input
+                    type="text"
+                    placeholder="e.g. 456 Broadway Ave"
+                    value={newShopAddress}
+                    onChange={(e) => setNewShopAddress(e.target.value)}
+                    className="w-full text-xs px-3 py-2 bg-white border border-[#e2e8f0] rounded-xl focus:outline-none focus:ring-1 focus:ring-purple-500 focus:border-purple-500 text-slate-800"
+                  />
+                </div>
+                <div>
+                  <label className="block text-[10px] uppercase tracking-wider font-bold text-slate-500 mb-1">Phone Number</label>
+                  <input
+                    type="text"
+                    placeholder="e.g. +1 (555) 012-3456"
+                    value={newShopPhone}
+                    onChange={(e) => setNewShopPhone(e.target.value)}
+                    className="w-full text-xs px-3 py-2 bg-white border border-[#e2e8f0] rounded-xl focus:outline-none focus:ring-1 focus:ring-purple-500 focus:border-purple-500 text-slate-800"
+                  />
+                </div>
+
+                <div className="flex justify-end">
+                  <button
+                    type="submit"
+                    className="w-full px-5 py-2.5 bg-purple-600 hover:bg-purple-700 text-white font-bold text-xs rounded-xl transition-all shadow-sm flex items-center justify-center gap-1.5 cursor-pointer"
+                  >
+                    <Plus className="w-3.5 h-3.5" /> Register Shop
+                  </button>
+                </div>
+              </form>
+            </div>
+
+            {/* Shops Directory */}
+            <div className="overflow-x-auto">
+              <table className="w-full text-left border-collapse text-xs">
+                <thead>
+                  <tr className="bg-slate-50 border-b border-[#e2e8f0] text-slate-400 font-bold uppercase tracking-wider">
+                    <th className="p-4">Shop ID</th>
+                    <th className="p-4">Shop Name</th>
+                    <th className="p-4">Address</th>
+                    <th className="p-4">Phone Number</th>
+                    <th className="p-4">Registered Date</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-100">
+                  {shops.map(sh => (
+                    <tr key={sh.id} className="hover:bg-slate-50/50">
+                      <td className="p-4 font-mono font-bold text-slate-500">#{sh.id}</td>
+                      <td className="p-4 font-bold text-slate-800 flex items-center gap-2">
+                        <MapPin className="w-3.5 h-3.5 text-purple-600" />
+                        {sh.name}
+                      </td>
+                      <td className="p-4 text-slate-600">{sh.address || 'N/A'}</td>
+                      <td className="p-4 font-medium text-slate-700 flex items-center gap-1 mt-3.5 border-t border-transparent">
+                        <Phone className="w-3 h-3 text-slate-400" />
+                        {sh.phone || 'N/A'}
+                      </td>
+                      <td className="p-4 text-slate-400">
+                        {new Date(sh.created_at || sh.created_date || Date.now()).toLocaleDateString()}
                       </td>
                     </tr>
                   ))}
