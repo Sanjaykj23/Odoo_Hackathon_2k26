@@ -792,6 +792,7 @@ router.get('/public/table/:qrToken', async (req, res) => {
         id: tableInfo.id,
         number: tableInfo.table_number,
         seats: tableInfo.seats,
+        occupied_seats: tableInfo.occupied_seats,
         status: tableInfo.status,
         qr_token: tableInfo.qr_token
       },
@@ -960,10 +961,13 @@ router.post('/public/tables/:qr_token/reserve', async (req, res) => {
     const table = tableRes.rows[0];
 
     // Check capacity
-    if (parseInt(guest_count) > table.seats) {
+    const requestedSeats = parseInt(guest_count);
+    const availableSeats = table.seats - (table.occupied_seats || 0);
+
+    if (requestedSeats > availableSeats) {
       await client.query('ROLLBACK');
       return res.status(400).json({ 
-        error: `Requested seats (${guest_count}) exceeds table capacity (${table.seats}). Please contact a waiter.` 
+        error: `Not enough seats. Requested ${requestedSeats}, but only ${availableSeats} of ${table.seats} are available.` 
       });
     }
 
@@ -979,10 +983,10 @@ router.post('/public/tables/:qr_token/reserve', async (req, res) => {
       customerId = custRes.rows[0].id;
     }
 
-    // Set table status to Occupied
+    // Set table status to Occupied and increment occupied_seats
     const updatedTable = await client.query(
-      "UPDATE tables SET status = 'Occupied' WHERE id = $1 RETURNING *",
-      [table.id]
+      "UPDATE tables SET status = 'Occupied', occupied_seats = occupied_seats + $1 WHERE id = $2 RETURNING *",
+      [requestedSeats, table.id]
     );
 
     await client.query('COMMIT');
@@ -1024,9 +1028,9 @@ router.post('/public/tables/:table_id/end-session', async (req, res) => {
     }
     const table = tableRes.rows[0];
 
-    // Set table status back to Available
+    // Set table status back to Available and reset occupied seats
     const updatedTable = await client.query(
-      "UPDATE tables SET status = 'Available' WHERE id = $1 RETURNING *",
+      "UPDATE tables SET status = 'Available', occupied_seats = 0 WHERE id = $1 RETURNING *",
       [table.id]
     );
 

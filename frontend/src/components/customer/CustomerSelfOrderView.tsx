@@ -119,9 +119,16 @@ export const CustomerSelfOrderView: React.FC<CustomerSelfOrderViewProps> = ({ ta
         }));
         setPromoCodes(mappedPromos);
 
-        // If table is already occupied, we can skip reservation form for subsequent members
-        if (data.table.status === 'Occupied') {
+        // Check if this specific device has already joined this table session
+        const hasJoinedLocally = localStorage.getItem(`joined_table_${tokenToUse}`);
+        if (hasJoinedLocally === 'true') {
           setIsReserved(true);
+          
+          // Try to recover phone from local storage if available so we can send it with future orders
+          const savedPhone = localStorage.getItem('customerPhone');
+          if (savedPhone) {
+            setCustomerPhone(savedPhone);
+          }
         }
 
         setLoading(false);
@@ -180,7 +187,18 @@ export const CustomerSelfOrderView: React.FC<CustomerSelfOrderViewProps> = ({ ta
           }
         }
         if (type === 'TABLE_UPDATED' && tableRef.current && payload.id === tableRef.current.id) {
-          setTable((prev: any) => ({ ...prev, status: payload.status, seats: payload.seats }));
+          setTable((prev: any) => ({ ...prev, status: payload.status, seats: payload.seats, occupied_seats: payload.occupied_seats }));
+          
+          if (payload.status === 'Available') {
+            setIsReserved(false);
+            setCart([]);
+            setTableHistory([]);
+            setActiveOrder(null);
+            
+            // Clear local storage for this table
+            const tokenToUse = qrToken || tableId;
+            localStorage.removeItem(`joined_table_${tokenToUse}`);
+          }
         }
       } catch (err) {
         console.error('[Socket] Failed to process real-time packet:', err);
@@ -304,6 +322,13 @@ export const CustomerSelfOrderView: React.FC<CustomerSelfOrderViewProps> = ({ ta
       }
 
       setIsReserved(true);
+      
+      // Save locally to remember this device
+      const tokenToUse = qrToken || tableId;
+      localStorage.setItem(`joined_table_${tokenToUse}`, 'true');
+      if (customerPhone.trim()) {
+        localStorage.setItem('customerPhone', customerPhone.trim());
+      }
     } catch (err: any) {
       setReservationError(err.message || 'Error processing reservation.');
     } finally {
@@ -541,7 +566,9 @@ export const CustomerSelfOrderView: React.FC<CustomerSelfOrderViewProps> = ({ ta
             <div className="space-y-1.5 bg-slate-50 p-3.5 rounded-2xl border border-slate-100 flex items-center justify-between">
               <div>
                 <label className="text-xs font-bold text-slate-700">Number of Guests</label>
-                <p className="text-[9px] text-slate-400">Table Capacity: {table?.seats} Seats</p>
+                <p className="text-[9px] text-slate-400">
+                  {table?.seats - (table?.occupied_seats || 0)} of {table?.seats} Seats Available
+                </p>
               </div>
               <div className="flex items-center gap-3 bg-white border border-slate-200 rounded-xl p-1">
                 <button
@@ -554,8 +581,9 @@ export const CustomerSelfOrderView: React.FC<CustomerSelfOrderViewProps> = ({ ta
                 <span className="text-xs font-black text-slate-800 w-4 text-center">{guestCount}</span>
                 <button
                   type="button"
-                  onClick={() => setGuestCount(prev => prev + 1)}
-                  className="p-1 text-slate-500 hover:bg-slate-100 rounded-lg cursor-pointer"
+                  onClick={() => setGuestCount(prev => Math.min(table?.seats - (table?.occupied_seats || 0), prev + 1))}
+                  className="p-1 text-slate-500 hover:bg-slate-100 rounded-lg cursor-pointer disabled:opacity-30"
+                  disabled={guestCount >= (table?.seats - (table?.occupied_seats || 0))}
                 >
                   <Plus className="w-3.5 h-3.5" />
                 </button>
