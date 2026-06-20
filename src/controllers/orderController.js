@@ -1,9 +1,50 @@
 const pool = require('../../db');
 const sse = require('../middleware/sse');
+const socketUtil = require('../config/socket');
 
 // Helper to generate a ticket number if not provided
 const generateTicketNumber = () => {
   return `T-${Math.floor(100 + Math.random() * 900)}`;
+};
+
+// Helper to fetch and format a complete order structure
+const getFormattedOrder = async (orderId) => {
+  const orderRes = await pool.query('SELECT * FROM orders WHERE id = $1', [orderId]);
+  const order = orderRes.rows[0];
+  if (!order) return null;
+
+  const itemsRes = await pool.query(
+    `SELECT oi.quantity, oi.unit_price, oi.line_total, oi.fulfilled, 
+            p.id as product_id, p.name as product_name, p.price as product_price, p.category_id as product_category 
+     FROM order_items oi
+     LEFT JOIN products p ON oi.product_id = p.id
+     WHERE oi.order_id = $1`,
+    [orderId]
+  );
+
+  const items = itemsRes.rows.map(row => ({
+    product: {
+      id: row.product_id,
+      name: row.product_name,
+      price: parseFloat(row.product_price),
+      category: row.product_category
+    },
+    quantity: row.quantity,
+    fulfilled: row.fulfilled
+  }));
+
+  return {
+    id: order.id,
+    ticketNumber: order.order_number,
+    items,
+    status: order.kds_status,
+    orderStatus: order.status,
+    createdAt: order.created_at,
+    total: parseFloat(order.total_amount),
+    customer: order.customer_name || 'Guest',
+    discount: parseFloat(order.discount_amount),
+    notes: order.notes
+  };
 };
 
 // 1. Create a New Order
@@ -107,8 +148,10 @@ const createOrder = async (req, res) => {
       await client.query(itemInsertQuery, [orderId, item.product_id, item.quantity, uPrice, lTotal]);
     }
 
-    // Update table status to Occupied in DB
-    await client.query("UPDATE tables SET status = 'Occupied' WHERE id = $1", [table_id]);
+    // Update table status in database and fetch table details
+    if (table_id) {
+      await client.query("UPDATE tables SET status = 'Occupied' WHERE id = $1", [table_id]);
+    }
     const tblRes = await client.query(
       `SELECT t.*, f.name as floor_name FROM tables t 
        JOIN floors f ON t.floor_id = f.id 
@@ -118,10 +161,26 @@ const createOrder = async (req, res) => {
 
     await client.query('COMMIT');
 
+    // Broadcast SSE updates
     const fullOrder = await fetchFullOrder(orderId);
     sse.broadcast('ORDER_CREATED', fullOrder);
     if (tblRes.rows.length > 0) {
       sse.broadcast('TABLE_UPDATED', tblRes.rows[0]);
+    }
+
+    // Fetch formatted order for broadcast
+    const formattedOrder = await getFormattedOrder(orderId);
+
+    // Broadcast WebSocket updates
+    try {
+      const io = socketUtil.getIO();
+      io.to(`branch_${targetShopId}_kitchen`).emit('NEW_KITCHEN_TICKET', formattedOrder);
+      io.to(`branch_${targetShopId}_all`).emit('TABLES_UPDATED', {
+        tableIds: table_id ? [table_id] : [],
+        status: 'Occupied'
+      });
+    } catch (wsErr) {
+      console.error('Socket broadcast error in createOrder:', wsErr.message);
     }
 
     res.status(201).json(createdOrder);
@@ -218,6 +277,28 @@ const editOrder = async (req, res) => {
       await client.query('COMMIT');
       const fullOrder = await fetchFullOrder(id);
       sse.broadcast('ORDER_UPDATED', fullOrder);
+
+      // Check if status has transitioned to 'Paid' (Checkout)
+      if (status === 'Paid') {
+        const orderTableId = table_id || existingOrder.table_id;
+        if (orderTableId) {
+          await pool.query("UPDATE tables SET status = 'Available' WHERE id = $1", [orderTableId]);
+        }
+
+        // Broadcast PAYMENT_SUCCESSFUL to customer display and TABLES_UPDATED to all
+        try {
+          const io = socketUtil.getIO();
+          const targetShopId = existingOrder.shop_id;
+          io.to(`branch_${targetShopId}_customer`).emit('PAYMENT_SUCCESSFUL', { orderId: id });
+          io.to(`branch_${targetShopId}_all`).emit('TABLES_UPDATED', {
+            tableIds: orderTableId ? [orderTableId] : [],
+            status: 'Available'
+          });
+        } catch (wsErr) {
+          console.error('Socket broadcast error in editOrder checkout:', wsErr.message);
+        }
+      }
+
       res.json(fullOrder);
     } catch (err) {
       await client.query('ROLLBACK');
@@ -382,6 +463,22 @@ const updateKdsStatus = async (req, res) => {
     await pool.query('UPDATE orders SET kds_status = $1, updated_at = CURRENT_TIMESTAMP WHERE id = $2', [kds_status, id]);
     const fullOrder = await fetchFullOrder(id);
     sse.broadcast('ORDER_UPDATED', fullOrder);
+
+    // Broadcast WebSocket updates
+    try {
+      const io = socketUtil.getIO();
+      const targetShopId = order.shop_id;
+      if (kds_status === 'Completed') {
+        io.to(`branch_${targetShopId}_pos`).emit('ORDER_READY_TO_SERVE', { orderId: id, status: 'Completed' });
+        io.to(`branch_${targetShopId}_customer`).emit('ORDER_READY_TO_SERVE', { orderId: id, status: 'Completed' });
+      } else {
+        io.to(`branch_${targetShopId}_pos`).emit('ORDER_STATUS_UPDATE', { orderId: id, status: kds_status });
+        io.to(`branch_${targetShopId}_customer`).emit('ORDER_STATUS_UPDATE', { orderId: id, status: kds_status });
+      }
+    } catch (wsErr) {
+      console.error('Socket broadcast error in updateKdsStatus:', wsErr.message);
+    }
+
     res.json({ message: `Order KDS status updated to ${kds_status}`, order: fullOrder });
   } catch (err) {
     console.error('Update KDS status error:', err);
@@ -422,6 +519,20 @@ const toggleItemFulfillment = async (req, res) => {
 
     const fullOrder = await fetchFullOrder(orderId);
     sse.broadcast('ORDER_UPDATED', fullOrder);
+
+    // Broadcast WebSocket updates
+    try {
+      const io = socketUtil.getIO();
+      const targetShopId = order.shop_id;
+      io.to(`branch_${targetShopId}_pos`).emit('ITEM_COOKED', {
+        orderId,
+        productId,
+        status: nextState ? 'ready' : 'pending'
+      });
+    } catch (wsErr) {
+      console.error('Socket broadcast error in toggleItemFulfillment:', wsErr.message);
+    }
+
     res.json({ message: `Item fulfillment set to ${nextState}`, order: fullOrder });
   } catch (err) {
     console.error('Toggle item fulfillment error:', err);

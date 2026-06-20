@@ -26,6 +26,7 @@ export interface Order {
   ticketNumber: string;
   items: OrderItem[];
   status: 'To Cook' | 'Preparing' | 'Completed';
+  orderStatus?: 'Draft' | 'Paid' | 'Cancelled';
   createdAt: string; // ISO String
   elapsed: number; // minutes elapsed
   total: number;
