@@ -4,6 +4,9 @@ import { POSView } from './components/pos/POSView';
 import { KDSView } from './components/kds/KDSView';
 import { AdminView } from './components/admin/AdminView';
 import { LoginView } from './components/auth/LoginView';
+import { SessionControl } from './components/pos/SessionControl';
+import { CustomerSelfOrderView } from './components/customer/CustomerSelfOrderView';
+import { CustomerDisplayView } from './components/customer/CustomerDisplayView';
 import { Coffee, Server, Clock } from 'lucide-react';
 
 function App() {
@@ -11,12 +14,41 @@ function App() {
   const [token, setToken] = useState<string | null>(localStorage.getItem('token'));
   const [user, setUser] = useState<any | null>(JSON.parse(localStorage.getItem('user') || 'null'));
 
+  // Routing Checks
+  const [route, setRoute] = useState<'terminal' | 'customer' | 'customer-display'>('terminal');
+  const [customerTableId, setCustomerTableId] = useState<string | null>(null);
+  const [customerQrToken, setCustomerQrToken] = useState<string | null>(null);
+
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const path = window.location.pathname;
+
+    if (params.get('customer') === 'true' || path.startsWith('/customer/')) {
+      setRoute('customer');
+      let tableId = params.get('tableId');
+      let tokenParam = params.get('token');
+      if (path.startsWith('/customer/table/')) {
+        const parts = path.split('/');
+        tableId = parts[3];
+      }
+      setCustomerTableId(tableId);
+      setCustomerQrToken(tokenParam);
+    } else if (path === '/customer-display' || params.get('display') === 'true') {
+      setRoute('customer-display');
+    } else {
+      setRoute('terminal');
+    }
+  }, []);
+
   // App-level Shared States
   const [products, setProducts] = useState<Product[]>([]);
   const [categories, setCategories] = useState<Category[]>([]);
+  const [floors, setFloors] = useState<any[]>([]);
   const [tables, setTables] = useState<SeatingTable[]>([]);
   const [promoCodes, setPromoCodes] = useState<PromoCode[]>([]);
   const [orders, setOrders] = useState<Order[]>([]);
+  const [sessions, setSessions] = useState<any[]>([]);
+  const [activeSession, setActiveSession] = useState<any | null>(null);
 
   // Active View switching
   const [activeView, setActiveView] = useState<string>('products');
@@ -72,9 +104,9 @@ function App() {
             category: p.category_id,
             image: p.image_url || 'https://images.unsplash.com/photo-1514432324607-a09d9b4aefdd?w=400&auto=format&fit=crop&q=60',
             available: p.is_available,
-            popularity: 4,
-            costIndex: 2,
-            country: 'India'
+            popularity: p.popularity || 4,
+            costIndex: p.cost_index || 2,
+            country: p.country || 'India'
           }));
           setProducts(mapped);
         }
@@ -86,6 +118,13 @@ function App() {
           setCategories(catData);
         }
 
+        // Fetch Floors
+        const floorRes = await fetch('http://localhost:5000/api/floors', { headers });
+        const floorData = await floorRes.json();
+        if (Array.isArray(floorData)) {
+          setFloors(floorData);
+        }
+
         // Fetch Tables
         const tableRes = await fetch('http://localhost:5000/api/tables', { headers });
         const tableData = await tableRes.json();
@@ -94,7 +133,9 @@ function App() {
             id: t.id,
             number: t.table_number,
             capacity: t.seats,
-            status: t.status
+            status: t.status,
+            floor_id: t.floor_id,
+            floor_name: t.floor_name
           }));
           setTables(mapped);
         }
@@ -118,6 +159,15 @@ function App() {
         if (Array.isArray(orderData)) {
           setOrders(orderData);
         }
+
+        // Fetch Sessions
+        const sessRes = await fetch('http://localhost:5000/api/sessions', { headers });
+        const sessData = await sessRes.json();
+        if (Array.isArray(sessData)) {
+          setSessions(sessData);
+          const openSess = sessData.find((s: any) => s.status === 'Open');
+          setActiveSession(openSess || null);
+        }
       } catch (err) {
         console.error('Error fetching data from API:', err);
       }
@@ -125,19 +175,122 @@ function App() {
 
     fetchAllData();
 
-    // Poll orders every 10 seconds for real-time kitchen experience
-    const interval = setInterval(() => {
-      fetch('http://localhost:5000/api/orders', { headers })
-        .then(res => res.json())
-        .then(data => {
-          if (Array.isArray(data)) {
-            setOrders(data);
-          }
-        })
-        .catch(err => console.error('Poll orders error:', err));
-    }, 10000);
+    // SSE Connection for Real-time synchronizations
+    const eventSource = new EventSource('http://localhost:5000/api/events');
 
-    return () => clearInterval(interval);
+    eventSource.onmessage = (event) => {
+      try {
+        const data = JSON.parse(event.data);
+        const { type, payload } = data;
+
+        switch (type) {
+          case 'CONNECTED':
+            console.log('[SSE] Connection confirmed:', payload);
+            break;
+          case 'ORDER_CREATED':
+            setOrders(prev => {
+              if (prev.some(o => o.id === payload.id)) return prev;
+              return [payload, ...prev];
+            });
+            break;
+          case 'ORDER_UPDATED':
+            setOrders(prev => prev.map(o => o.id === payload.id ? payload : o));
+            break;
+          case 'ORDER_DELETED':
+            setOrders(prev => prev.filter(o => o.id !== payload.id));
+            break;
+          case 'PRODUCT_UPDATED':
+            setProducts(prev => {
+              const mapped = {
+                id: payload.id,
+                name: payload.name,
+                price: parseFloat(payload.price),
+                category: payload.category_id,
+                image: payload.image_url || 'https://images.unsplash.com/photo-1514432324607-a09d9b4aefdd?w=400&auto=format&fit=crop&q=60',
+                available: payload.is_available,
+                popularity: payload.popularity || 4,
+                costIndex: payload.cost_index || 2,
+                country: payload.country || 'India'
+              };
+              if (prev.some(p => p.id === payload.id)) {
+                return prev.map(p => p.id === payload.id ? mapped : p);
+              }
+              return [...prev, mapped];
+            });
+            break;
+          case 'PRODUCT_DELETED':
+            setProducts(prev => prev.filter(p => p.id !== payload.id));
+            break;
+          case 'CATEGORY_UPDATED':
+            setCategories(prev => {
+              if (prev.some(c => c.id === payload.id)) {
+                return prev.map(c => c.id === payload.id ? payload : c);
+              }
+              return [...prev, payload];
+            });
+            break;
+          case 'CATEGORY_DELETED':
+            setCategories(prev => prev.filter(c => c.id !== payload.id));
+            break;
+          case 'TABLE_UPDATED':
+            setTables(prev => {
+              const mapped = {
+                id: payload.id,
+                number: payload.table_number,
+                capacity: payload.seats,
+                status: payload.status,
+                floor_id: payload.floor_id,
+                floor_name: payload.floor_name
+              };
+              if (prev.some(t => t.id === payload.id)) {
+                return prev.map(t => t.id === payload.id ? mapped : t);
+              }
+              return [...prev, mapped];
+            });
+            break;
+          case 'TABLE_DELETED':
+            setTables(prev => prev.filter(t => t.id !== payload.id));
+            break;
+          case 'FLOOR_UPDATED':
+            setFloors(prev => {
+              if (prev.some(f => f.id === payload.id)) {
+                return prev.map(f => f.id === payload.id ? payload : f);
+              }
+              return [...prev, payload];
+            });
+            break;
+          case 'FLOOR_DELETED':
+            setFloors(prev => prev.filter(f => f.id !== payload.id));
+            break;
+          case 'PROMO_UPDATED':
+            setPromoCodes(prev => {
+              const mapped = {
+                code: payload.code,
+                discountType: payload.discount_type,
+                value: parseFloat(payload.discount_value),
+                active: payload.is_active
+              };
+              if (prev.some(p => p.code === payload.code)) {
+                return prev.map(p => p.code === payload.code ? mapped : p);
+              }
+              return [...prev, mapped];
+            });
+            break;
+          case 'PROMO_DELETED':
+            setPromoCodes(prev => prev.filter(p => p.code !== payload.code));
+            break;
+          default:
+            break;
+        }
+      } catch (err) {
+        console.error('[SSE] Failed to parse message event data:', err);
+      }
+    };
+
+    return () => {
+      eventSource.close();
+      console.log('[SSE] Connection closed.');
+    };
   }, [token]);
 
   // State Modifiers (Transactional API Logic)
@@ -145,9 +298,20 @@ function App() {
     cartItems: CartItem[], 
     customerName: string, 
     promo: PromoCode | null, 
-    notes: string
+    notes: string,
+    tableId: string
   ) => {
     if (!token) return;
+
+    if (!tableId) {
+      alert('Table selection is mandatory to place an order.');
+      return;
+    }
+
+    if (!activeSession) {
+      alert('You must open a POS session before placing an order.');
+      return;
+    }
 
     const subtotal = cartItems.reduce((sum, item) => sum + (item.product.price * item.quantity), 0);
     let discount = 0;
@@ -161,7 +325,6 @@ function App() {
     const tax = (subtotal - discount) * 0.05;
     const total = Math.max(0, subtotal - discount + tax);
 
-    // Default to table 1 for terminal quick orders (tbl-1)
     const payload = {
       items: cartItems.map(item => ({
         product_id: item.product.id,
@@ -169,12 +332,12 @@ function App() {
         unit_price: item.product.price,
         line_total: item.product.price * item.quantity
       })),
-      table_id: 'tbl-1',
+      table_id: tableId,
       subtotal,
       tax,
       discount_amount: discount,
       total_amount: total,
-      payment_method: 'Cash',
+      payment_method: null,
       status: 'Draft',
       customer_name: customerName || 'Guest',
       notes: notes
@@ -191,16 +354,7 @@ function App() {
       });
 
       const newOrder = await response.json();
-      if (response.ok) {
-        // Refetch orders list to update UI
-        const orderRes = await fetch('http://localhost:5000/api/orders', {
-          headers: { 'Authorization': `Bearer ${token}` }
-        });
-        const orderData = await orderRes.json();
-        if (Array.isArray(orderData)) {
-          setOrders(orderData);
-        }
-      } else {
+      if (!response.ok) {
         alert(newOrder.error || 'Failed to place order.');
       }
     } catch (err) {
@@ -289,6 +443,15 @@ function App() {
       alert('Forbidden. Only SuperAdmin can delete orders from the database.');
     }
   };
+
+  // Dynamic Routing Resolver
+  if (route === 'customer') {
+    return <CustomerSelfOrderView tableId={customerTableId} qrToken={customerQrToken} />;
+  }
+
+  if (route === 'customer-display') {
+    return <CustomerDisplayView />;
+  }
 
   // If not authenticated, display login screen
   if (!token || !user) {
@@ -415,14 +578,32 @@ function App() {
             setActiveView={setActiveView}
           />
         ) : (
-          <POSView 
-            products={products}
-            categories={categories.map(c => ({ id: c.id, name: c.name }))}
-            promoCodes={promoCodes}
-            onSendToKitchen={handleSendToKitchen}
-            activeView={activeView}
-            setActiveView={setActiveView}
-          />
+          <div className="flex-1 flex flex-col overflow-hidden">
+            {['SuperAdmin', 'Admin', 'Employee'].includes(user.role) && (
+              <div className="p-4 bg-slate-50 border-b border-[#e2e8f0]">
+                <SessionControl 
+                  token={token}
+                  activeSession={activeSession}
+                  onSessionOpened={setActiveSession}
+                  onSessionClosed={() => setActiveSession(null)}
+                  userName={user.name}
+                />
+              </div>
+            )}
+            <div className="flex-1 flex overflow-hidden">
+              <POSView 
+                products={products}
+                categories={categories.map(c => ({ id: c.id, name: c.name }))}
+                promoCodes={promoCodes}
+                onSendToKitchen={handleSendToKitchen}
+                activeView={activeView}
+                setActiveView={setActiveView}
+                tables={tables}
+                activeSession={activeSession}
+                token={token}
+              />
+            </div>
+          </div>
         )}
       </main>
 

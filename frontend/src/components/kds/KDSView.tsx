@@ -20,6 +20,11 @@ export const KDSView: React.FC<KDSViewProps> = ({
   onClearOrder,
   setActiveView,
 }) => {
+  // Filter orders by status
+  const toCookOrders = orders.filter(o => o.status === 'To Cook');
+  const preparingOrders = orders.filter(o => o.status === 'Preparing');
+  const completedOrders = orders.filter(o => o.status === 'Completed');
+
   // Simple simulation of ticking elapsed minutes
   const [, setTick] = useState(0);
 
@@ -30,10 +35,17 @@ export const KDSView: React.FC<KDSViewProps> = ({
     return () => clearInterval(timer);
   }, []);
 
-  // Filter orders by status
-  const toCookOrders = orders.filter(o => o.status === 'To Cook');
-  const preparingOrders = orders.filter(o => o.status === 'Preparing');
-  const completedOrders = orders.filter(o => o.status === 'Completed');
+  // Sound chime when a new order is added to To Cook lane
+  const prevCountRef = React.useRef(toCookOrders.length);
+
+  useEffect(() => {
+    if (toCookOrders.length > prevCountRef.current) {
+      const chime = new Audio('https://assets.mixkit.co/active_storage/sfx/2568/2568-84.wav');
+      chime.volume = 0.6;
+      chime.play().catch(e => console.log('KDS Audio autoplay block:', e));
+    }
+    prevCountRef.current = toCookOrders.length;
+  }, [toCookOrders.length]);
 
   // Helper to color-code ticket timing indicators cleanly
   const getElapsedTimeClass = (minutes: number) => {
@@ -99,7 +111,14 @@ export const KDSView: React.FC<KDSViewProps> = ({
                   {/* Ticket Metadata */}
                   <div className="flex justify-between items-start">
                     <div>
-                      <span className="text-xs font-bold text-slate-800">{order.ticketNumber}</span>
+                      <div className="flex items-center gap-2">
+                        <span className="text-xs font-bold text-slate-800">{order.ticketNumber}</span>
+                        {order.tableNumber !== undefined && (
+                          <span className="bg-purple-600/10 text-purple-700 border border-purple-600/20 px-2 py-0.5 rounded-md text-[9px] font-extrabold uppercase tracking-wide">
+                            Table {order.tableNumber}
+                          </span>
+                        )}
+                      </div>
                       {order.customer && (
                         <p className="text-[10px] text-slate-500 font-medium flex items-center gap-1 mt-0.5">
                           <User className="w-2.5 h-2.5 text-slate-400" /> {order.customer}
@@ -187,7 +206,14 @@ export const KDSView: React.FC<KDSViewProps> = ({
                   {/* Ticket Metadata */}
                   <div className="flex justify-between items-start">
                     <div>
-                      <span className="text-xs font-bold text-slate-800">{order.ticketNumber}</span>
+                      <div className="flex items-center gap-2">
+                        <span className="text-xs font-bold text-slate-800">{order.ticketNumber}</span>
+                        {order.tableNumber !== undefined && (
+                          <span className="bg-purple-600/10 text-purple-700 border border-purple-600/20 px-2 py-0.5 rounded-md text-[9px] font-extrabold uppercase tracking-wide">
+                            Table {order.tableNumber}
+                          </span>
+                        )}
+                      </div>
                       {order.customer && (
                         <p className="text-[10px] text-slate-500 font-medium flex items-center gap-1 mt-0.5">
                           <User className="w-2.5 h-2.5 text-slate-400" /> {order.customer}
@@ -281,7 +307,14 @@ export const KDSView: React.FC<KDSViewProps> = ({
                   {/* Ticket Metadata */}
                   <div className="flex justify-between items-start">
                     <div>
-                      <span className="text-xs font-bold text-slate-600 line-through">{order.ticketNumber}</span>
+                      <div className="flex items-center gap-2">
+                        <span className="text-xs font-bold text-slate-600 line-through">{order.ticketNumber}</span>
+                        {order.tableNumber !== undefined && (
+                          <span className="bg-purple-600/10 text-purple-700 border border-purple-600/20 px-2 py-0.5 rounded-md text-[9px] font-extrabold uppercase tracking-wide">
+                            Table {order.tableNumber}
+                          </span>
+                        )}
+                      </div>
                       {order.customer && (
                         <p className="text-[10px] text-slate-500 font-medium flex items-center gap-1 mt-0.5">
                           <User className="w-2.5 h-2.5 text-slate-400" /> {order.customer}

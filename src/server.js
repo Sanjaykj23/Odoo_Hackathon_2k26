@@ -20,6 +20,10 @@ app.use((req, res, next) => {
   next();
 });
 
+// SSE Real-time Endpoint
+const sse = require('./middleware/sse');
+app.get('/api/events', sse.register);
+
 // API Routes
 app.use('/api', apiRoutes);
 
@@ -34,10 +38,24 @@ app.use((err, req, res, next) => {
   res.status(500).json({ error: 'Internal Server Error' });
 });
 
-// Start Server
-app.listen(PORT, () => {
-  console.log(`=============================================`);
-  console.log(`Odoo Cafe POS Backend running on port ${PORT}`);
-  console.log(`API base URL: http://localhost:${PORT}/api`);
-  console.log(`=============================================`);
-});
+// Run migrations on startup, then start server
+const runMigrations = require('./migrations');
+runMigrations()
+  .then(() => {
+    app.listen(PORT, () => {
+      console.log(`=============================================`);
+      console.log(`Odoo Cafe POS Backend running on port ${PORT}`);
+      console.log(`API base URL: http://localhost:${PORT}/api`);
+      console.log(`=============================================`);
+    });
+  })
+  .catch(err => {
+    console.error('Failed to run migrations. Starting server anyway...', err);
+    app.listen(PORT, () => {
+      console.log(`=============================================`);
+      console.log(`Odoo Cafe POS Backend running on port ${PORT} (Migration Error)`);
+      console.log(`API base URL: http://localhost:${PORT}/api`);
+      console.log(`=============================================`);
+    });
+  });
+

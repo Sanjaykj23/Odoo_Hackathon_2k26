@@ -1,4 +1,5 @@
 const pool = require('../../db');
+const sse = require('../middleware/sse');
 
 // Helper to generate a ticket number if not provided
 const generateTicketNumber = () => {
@@ -18,17 +19,21 @@ const createOrder = async (req, res) => {
     total_amount,
     payment_method,
     status,
-    notes
+    notes,
+    customer_name
   } = req.body;
 
   if (!items || !Array.isArray(items) || items.length === 0) {
     return res.status(400).json({ error: 'Order must contain at least one item.' });
   }
 
+  // Enforce mandatory table selection
+  if (!table_id) {
+    return res.status(400).json({ error: 'Table selection is mandatory to place an order.' });
+  }
+
   // Deduce shop_id and employee_id from request token
-  const shopId = req.user.shop_id; // Customers/guests might place orders without shop_id in req.user? 
-  // Wait, if a Customer places a self-order, they don't have a token, but the token table links to a shop!
-  // For the initial setup, we assume Employee/Cashier is logged in, or we get the shop_id from the body for QR ordering.
+  const shopId = req.user.shop_id;
   const targetShopId = shopId || req.body.shop_id;
   const employeeId = req.user.role !== 'Customer' ? req.user.id : null;
 
@@ -51,14 +56,18 @@ const createOrder = async (req, res) => {
         [targetShopId]
       );
       sessionId = sessionRes.rows[0]?.id || null;
+      if (!sessionId) {
+        await client.query('ROLLBACK');
+        return res.status(400).json({ error: 'You must open a POS session before placing an order.' });
+      }
     }
 
     // Insert Order Header
     const orderQuery = `
       INSERT INTO orders (
         id, order_number, shop_id, session_id, employee_id, customer_id, table_id, 
-        subtotal, tax, discount_amount, total_amount, payment_method, status, kds_status, notes
-      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, 'To Cook', $14)
+        subtotal, tax, discount_amount, total_amount, payment_method, status, kds_status, notes, customer_name
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, 'To Cook', $14, $15)
       RETURNING *
     `;
     const orderValues = [
@@ -68,14 +77,15 @@ const createOrder = async (req, res) => {
       sessionId,
       employeeId,
       req.body.customer_id || null,
-      table_id || null,
+      table_id,
       subtotal || 0.00,
       tax || 0.00,
       discount_amount || 0.00,
       total_amount || 0.00,
       payment_method || null,
       status || 'Draft',
-      notes || null
+      notes || null,
+      customer_name || null
     ];
 
     const orderRes = await client.query(orderQuery, orderValues);
@@ -88,18 +98,32 @@ const createOrder = async (req, res) => {
     `;
 
     for (const item of items) {
-      // Fetch unit price if not provided
       let uPrice = item.unit_price;
       if (uPrice === undefined) {
         const prodRes = await client.query('SELECT price FROM products WHERE id = $1', [item.product_id]);
         uPrice = prodRes.rows[0]?.price || 0.00;
       }
       const lTotal = item.line_total !== undefined ? item.line_total : (uPrice * item.quantity);
-
       await client.query(itemInsertQuery, [orderId, item.product_id, item.quantity, uPrice, lTotal]);
     }
 
+    // Update table status to Occupied in DB
+    await client.query("UPDATE tables SET status = 'Occupied' WHERE id = $1", [table_id]);
+    const tblRes = await client.query(
+      `SELECT t.*, f.name as floor_name FROM tables t 
+       JOIN floors f ON t.floor_id = f.id 
+       WHERE t.id = $1`,
+      [table_id]
+    );
+
     await client.query('COMMIT');
+
+    const fullOrder = await fetchFullOrder(orderId);
+    sse.broadcast('ORDER_CREATED', fullOrder);
+    if (tblRes.rows.length > 0) {
+      sse.broadcast('TABLE_UPDATED', tblRes.rows[0]);
+    }
+
     res.status(201).json(createdOrder);
   } catch (err) {
     await client.query('ROLLBACK');
@@ -192,7 +216,9 @@ const editOrder = async (req, res) => {
       }
 
       await client.query('COMMIT');
-      res.json(updatedOrder);
+      const fullOrder = await fetchFullOrder(id);
+      sse.broadcast('ORDER_UPDATED', fullOrder);
+      res.json(fullOrder);
     } catch (err) {
       await client.query('ROLLBACK');
       throw err;
@@ -214,13 +240,39 @@ const deleteOrder = async (req, res) => {
   }
 
   try {
-    const orderExists = await pool.query('SELECT id FROM orders WHERE id = $1', [id]);
-    if (orderExists.rows.length === 0) {
+    const orderRes = await pool.query('SELECT id, table_id FROM orders WHERE id = $1', [id]);
+    if (orderRes.rows.length === 0) {
       return res.status(404).json({ error: 'Order not found.' });
     }
+    const order = orderRes.rows[0];
 
-    await pool.query('DELETE FROM orders WHERE id = $1', [id]);
-    res.json({ message: 'Order has been deleted successfully.' });
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+      await client.query('DELETE FROM orders WHERE id = $1', [id]);
+      
+      if (order.table_id) {
+        await client.query("UPDATE tables SET status = 'Available' WHERE id = $1", [order.table_id]);
+        const tblRes = await client.query(
+          `SELECT t.*, f.name as floor_name FROM tables t 
+           JOIN floors f ON t.floor_id = f.id 
+           WHERE t.id = $1`,
+          [order.table_id]
+        );
+        if (tblRes.rows.length > 0) {
+          sse.broadcast('TABLE_UPDATED', tblRes.rows[0]);
+        }
+      }
+      
+      await client.query('COMMIT');
+      sse.broadcast('ORDER_DELETED', { id });
+      res.json({ message: 'Order has been deleted successfully.' });
+    } catch (err) {
+      await client.query('ROLLBACK');
+      throw err;
+    } finally {
+      client.release();
+    }
   } catch (err) {
     console.error('Delete order error:', err);
     res.status(500).json({ error: 'Database server error.' });
@@ -236,13 +288,27 @@ const listOrders = async (req, res) => {
     // Determine scope
     if (req.user.role === 'SuperAdmin') {
       if (shopId) {
-        result = await pool.query('SELECT * FROM orders WHERE shop_id = $1 ORDER BY created_at DESC', [shopId]);
+        result = await pool.query(
+          `SELECT o.*, t.table_number FROM orders o 
+           LEFT JOIN tables t ON o.table_id = t.id 
+           WHERE o.shop_id = $1 ORDER BY o.created_at DESC`,
+          [shopId]
+        );
       } else {
-        result = await pool.query('SELECT * FROM orders ORDER BY created_at DESC');
+        result = await pool.query(
+          `SELECT o.*, t.table_number FROM orders o 
+           LEFT JOIN tables t ON o.table_id = t.id 
+           ORDER BY o.created_at DESC`
+        );
       }
     } else {
       // Admins, Employees, Chefs can only list their own shop's orders
-      result = await pool.query('SELECT * FROM orders WHERE shop_id = $1 ORDER BY created_at DESC', [req.user.shop_id]);
+      result = await pool.query(
+        `SELECT o.*, t.table_number FROM orders o 
+         LEFT JOIN tables t ON o.table_id = t.id 
+         WHERE o.shop_id = $1 ORDER BY o.created_at DESC`,
+        [req.user.shop_id]
+      );
     }
 
     const ordersList = [];
@@ -279,7 +345,8 @@ const listOrders = async (req, res) => {
         total: parseFloat(order.total_amount),
         customer: order.customer_name || 'Guest',
         discount: parseFloat(order.discount_amount),
-        notes: order.notes
+        notes: order.notes,
+        tableNumber: order.table_number ? parseInt(order.table_number) : undefined
       });
     }
 
@@ -313,7 +380,9 @@ const updateKdsStatus = async (req, res) => {
     }
 
     await pool.query('UPDATE orders SET kds_status = $1, updated_at = CURRENT_TIMESTAMP WHERE id = $2', [kds_status, id]);
-    res.json({ message: `Order KDS status updated to ${kds_status}` });
+    const fullOrder = await fetchFullOrder(id);
+    sse.broadcast('ORDER_UPDATED', fullOrder);
+    res.json({ message: `Order KDS status updated to ${kds_status}`, order: fullOrder });
   } catch (err) {
     console.error('Update KDS status error:', err);
     res.status(500).json({ error: 'Database server error.' });
@@ -351,11 +420,58 @@ const toggleItemFulfillment = async (req, res) => {
       [nextState, orderId, productId]
     );
 
-    res.json({ message: `Item fulfillment set to ${nextState}` });
+    const fullOrder = await fetchFullOrder(orderId);
+    sse.broadcast('ORDER_UPDATED', fullOrder);
+    res.json({ message: `Item fulfillment set to ${nextState}`, order: fullOrder });
   } catch (err) {
     console.error('Toggle item fulfillment error:', err);
     res.status(500).json({ error: 'Database server error.' });
   }
+};
+
+const fetchFullOrder = async (orderId) => {
+  const orderRes = await pool.query(
+    `SELECT o.*, t.table_number FROM orders o 
+     LEFT JOIN tables t ON o.table_id = t.id 
+     WHERE o.id = $1`,
+    [orderId]
+  );
+  if (orderRes.rows.length === 0) return null;
+  const order = orderRes.rows[0];
+  
+  const itemsRes = await pool.query(
+    `SELECT oi.quantity, oi.unit_price, oi.line_total, oi.fulfilled, 
+            p.id as product_id, p.name as product_name, p.price as product_price, p.category_id as product_category 
+     FROM order_items oi
+     LEFT JOIN products p ON oi.product_id = p.id
+     WHERE oi.order_id = $1`,
+    [order.id]
+  );
+
+  const items = itemsRes.rows.map(row => ({
+    product: {
+      id: row.product_id,
+      name: row.product_name,
+      price: parseFloat(row.product_price),
+      category: row.product_category
+    },
+    quantity: row.quantity,
+    fulfilled: row.fulfilled
+  }));
+
+  return {
+    id: order.id,
+    ticketNumber: order.order_number,
+    items,
+    status: order.kds_status, // map PostgreSQL kds_status to frontend order status
+    orderStatus: order.status, // Draft, Paid, Cancelled
+    createdAt: order.created_at,
+    total: parseFloat(order.total_amount),
+    customer: order.customer_name || 'Guest',
+    discount: parseFloat(order.discount_amount),
+    notes: order.notes,
+    tableNumber: order.table_number ? parseInt(order.table_number) : undefined
+  };
 };
 
 module.exports = {
@@ -364,5 +480,6 @@ module.exports = {
   deleteOrder,
   listOrders,
   updateKdsStatus,
-  toggleItemFulfillment
+  toggleItemFulfillment,
+  fetchFullOrder
 };

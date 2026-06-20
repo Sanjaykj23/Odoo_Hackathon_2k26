@@ -127,84 +127,209 @@ export const AdminView: React.FC<AdminViewProps> = ({
   }, [activeTab, token, user]);
 
   // Handlers for Products
-  const handleAddProduct = (e: React.FormEvent) => {
+  const handleAddProduct = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!newProdName || !newProdPrice) return;
+    if (!newProdName || !newProdPrice || !token) return;
     const priceNum = parseFloat(newProdPrice);
     if (isNaN(priceNum)) return;
 
-    const newProd: Product = {
+    const payload = {
       id: `p-${Date.now()}`,
       name: newProdName,
       price: priceNum,
-      category: newProdCategory,
-      image: newProdImage.trim() || 'https://images.unsplash.com/photo-1546069901-ba9599a7e63c?w=400&auto=format&fit=crop&q=60',
-      available: true,
+      category_id: newProdCategory,
+      image_url: newProdImage.trim() || 'https://images.unsplash.com/photo-1546069901-ba9599a7e63c?w=400&auto=format&fit=crop&q=60',
       popularity: 4,
-      costIndex: 2,
-      country: newProdCountry
+      cost_index: 2,
+      country: newProdCountry || 'India',
+      shop_id: user.shop_id || 1
     };
 
-    onUpdateProducts([...products, newProd]);
-    
-    // reset form
-    setNewProdName('');
-    setNewProdPrice('');
-    setNewProdImage('');
+    try {
+      const response = await fetch('http://localhost:5000/api/products', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`
+        },
+        body: JSON.stringify(payload)
+      });
+      if (response.ok) {
+        setNewProdName('');
+        setNewProdPrice('');
+        setNewProdImage('');
+      } else {
+        const errData = await response.json();
+        alert(errData.error || 'Failed to add product to database.');
+      }
+    } catch (err) {
+      console.error('Error adding product:', err);
+    }
   };
 
-  const handleDeleteProduct = (id: string) => {
-    onUpdateProducts(products.filter(p => p.id !== id));
+  const handleDeleteProduct = async (id: string) => {
+    if (!token) return;
+    const confirmDelete = window.confirm('Are you sure you want to delete this product?');
+    if (!confirmDelete) return;
+
+    try {
+      const response = await fetch(`http://localhost:5000/api/products/${id}`, {
+        method: 'DELETE',
+        headers: { 'Authorization': `Bearer ${token}` }
+      });
+      if (!response.ok) {
+        const errData = await response.json();
+        alert(errData.error || 'Failed to delete product.');
+      }
+    } catch (err) {
+      console.error('Error deleting product:', err);
+    }
   };
 
-  const toggleAvailability = (id: string) => {
-    onUpdateProducts(products.map(p => 
-      p.id === id ? { ...p, available: !p.available } : p
-    ));
+  const toggleAvailability = async (id: string) => {
+    if (!token) return;
+    const product = products.find(p => p.id === id);
+    if (!product) return;
+
+    try {
+      const response = await fetch(`http://localhost:5000/api/products/${id}/availability`, {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`
+        },
+        body: JSON.stringify({ is_available: !product.available })
+      });
+      if (!response.ok) {
+        const errData = await response.json();
+        alert(errData.error || 'Failed to toggle availability.');
+      }
+    } catch (err) {
+      console.error('Error toggling availability:', err);
+    }
   };
 
   // Handlers for Promos
-  const handleAddPromo = (e: React.FormEvent) => {
+  const handleAddPromo = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!newPromoCode || !newPromoValue) return;
+    if (!newPromoCode || !newPromoValue || !token) return;
     const valNum = parseFloat(newPromoValue);
     if (isNaN(valNum)) return;
 
-    const newPromo: PromoCode = {
+    const payload = {
       code: newPromoCode.trim().toUpperCase(),
       discountType: newPromoType,
       value: valNum,
-      active: true
+      shop_id: user.shop_id || 1
     };
 
-    onUpdatePromoCodes([...promoCodes, newPromo]);
-    setNewPromoCode('');
-    setNewPromoValue('');
+    try {
+      const response = await fetch('http://localhost:5000/api/promos', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`
+        },
+        body: JSON.stringify(payload)
+      });
+      if (response.ok) {
+        setNewPromoCode('');
+        setNewPromoValue('');
+      } else {
+        const errData = await response.json();
+        alert(errData.error || 'Failed to save promo code.');
+      }
+    } catch (err) {
+      console.error('Error adding promo code:', err);
+    }
   };
 
-  const togglePromo = (code: string) => {
-    onUpdatePromoCodes(promoCodes.map(p => 
-      p.code === code ? { ...p, active: !p.active } : p
-    ));
+  const togglePromo = async (code: string) => {
+    if (!token) return;
+    const promo = promoCodes.find(p => p.code === code);
+    if (!promo) return;
+
+    try {
+      const response = await fetch(`http://localhost:5000/api/promos/${code}`, {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`
+        },
+        body: JSON.stringify({ active: !promo.active })
+      });
+      if (!response.ok) {
+        const errData = await response.json();
+        alert(errData.error || 'Failed to update promo status.');
+      }
+    } catch (err) {
+      console.error('Error toggling promo:', err);
+    }
   };
 
-  const handleDeletePromo = (code: string) => {
-    onUpdatePromoCodes(promoCodes.filter(p => p.code !== code));
+  const handleDeletePromo = async (code: string) => {
+    if (!token) return;
+    const confirmDelete = window.confirm('Are you sure you want to delete this promo code?');
+    if (!confirmDelete) return;
+
+    try {
+      const response = await fetch(`http://localhost:5000/api/promos/${code}`, {
+        method: 'DELETE',
+        headers: { 'Authorization': `Bearer ${token}` }
+      });
+      if (!response.ok) {
+        const errData = await response.json();
+        alert(errData.error || 'Failed to delete promo code.');
+      }
+    } catch (err) {
+      console.error('Error deleting promo:', err);
+    }
   };
 
   // Handlers for Tables
-  const updateTableStatus = (id: string, status: SeatingTable['status']) => {
-    onUpdateTables(tables.map(t => 
-      t.id === id ? { ...t, status } : t
-    ));
+  const updateTableStatus = async (id: string, status: SeatingTable['status']) => {
+    if (!token) return;
+
+    try {
+      const response = await fetch(`http://localhost:5000/api/tables/${id}/status`, {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`
+        },
+        body: JSON.stringify({ status })
+      });
+      if (!response.ok) {
+        const errData = await response.json();
+        alert(errData.error || 'Failed to update table status.');
+      }
+    } catch (err) {
+      console.error('Error updating table status:', err);
+    }
   };
 
   // Handlers for Categories
-  const handleSaveCategoryColor = (id: string) => {
-    onUpdateCategories(categories.map(c => 
-      c.id === id ? { ...c, color: editingCategoryColor } : c
-    ));
-    setEditingCategoryId(null);
+  const handleSaveCategoryColor = async (id: string) => {
+    if (!token) return;
+
+    try {
+      const response = await fetch(`http://localhost:5000/api/categories/${id}`, {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`
+        },
+        body: JSON.stringify({ color: editingCategoryColor })
+      });
+      if (response.ok) {
+        setEditingCategoryId(null);
+      } else {
+        const errData = await response.json();
+        alert(errData.error || 'Failed to save category color.');
+      }
+    } catch (err) {
+      console.error('Error saving category color:', err);
+    }
   };
 
   // Shop Creation Handler (SuperAdmin Only)
@@ -388,6 +513,7 @@ export const AdminView: React.FC<AdminViewProps> = ({
     { id: 'tables', label: 'Table Arrangements', icon: Calendar },
     { id: 'promos', label: 'Promos & Codes', icon: Percent },
     { id: 'users', label: 'User & Employees', icon: Users },
+    { id: 'reports', label: 'Reports & Analytics', icon: TrendingUp },
   ];
 
   if (user?.role === 'SuperAdmin') {
@@ -1189,6 +1315,231 @@ export const AdminView: React.FC<AdminViewProps> = ({
 
           </div>
         )}
+
+        {/* REPORTS & ANALYTICS TAB */}
+        {activeTab === 'reports' && (() => {
+          // Calculations
+          const totalPaidOrders = orders.filter(o => o.orderStatus === 'Paid');
+          const totalRevenue = totalPaidOrders.reduce((sum, o) => sum + o.total, 0);
+          const totalDiscount = totalPaidOrders.reduce((sum, o) => sum + o.discount, 0);
+
+          // Category sales breakdown calculation
+          const categorySales: Record<string, number> = {};
+          totalPaidOrders.forEach(o => {
+            o.items.forEach(item => {
+              const cat = item.product.category || 'other';
+              const itemTotal = item.product.price * item.quantity;
+              categorySales[cat] = (categorySales[cat] || 0) + itemTotal;
+            });
+          });
+
+          const totalCategoryRevenue = Object.values(categorySales).reduce((sum, v) => sum + v, 0);
+
+          // SVG Pie Chart calculations
+          const catEntries = Object.entries(categorySales);
+          let cumulativePercent = 0;
+          const donutSlices = catEntries.map(([cat, val], idx) => {
+            const pct = totalCategoryRevenue > 0 ? (val / totalCategoryRevenue) : 0;
+            const startPct = cumulativePercent;
+            cumulativePercent += pct;
+            return {
+              category: cat,
+              value: val,
+              pct,
+              startPct,
+              color: ['#8b5cf6', '#3b82f6', '#10b981', '#f59e0b', '#ec4899', '#6366f1'][idx % 6]
+            };
+          });
+
+          // CSV Exporter Trigger
+          const exportToCSV = () => {
+            const headers = ["Order ID", "Ticket Number", "Customer Name", "Total Amount (INR)", "Discount (INR)", "KDS Prep Status", "Payment Status", "Placed Date"];
+            const rows = orders.map(o => [
+              o.id,
+              o.ticketNumber,
+              o.customer,
+              o.total.toFixed(2),
+              o.discount.toFixed(2),
+              o.status,
+              o.orderStatus,
+              new Date(o.createdAt).toLocaleString()
+            ]);
+            const csvContent = "data:text/csv;charset=utf-8," 
+              + [headers.join(","), ...rows.map(e => e.map(val => `"${String(val).replace(/"/g, '""')}"`).join(","))].join("\n");
+            const encodedUri = encodeURI(csvContent);
+            const link = document.createElement("a");
+            link.setAttribute("href", encodedUri);
+            link.setAttribute("download", `odoo_cafe_sales_report_${new Date().toISOString().split('T')[0]}.csv`);
+            document.body.appendChild(link);
+            link.click();
+            document.body.removeChild(link);
+          };
+
+          return (
+            <div className="p-6 space-y-6">
+              {/* Controls bar */}
+              <div className="flex justify-between items-center bg-slate-50 p-4 rounded-xl border border-slate-200">
+                <div>
+                  <h3 className="text-sm font-extrabold text-slate-800">Financial Reports & Logs</h3>
+                  <p className="text-[11px] text-slate-400">Generate statements, export transaction registers, and inspect analytics.</p>
+                </div>
+                <div className="flex gap-2">
+                  <button 
+                    onClick={exportToCSV}
+                    className="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-xs font-bold transition-all flex items-center gap-1.5 cursor-pointer shadow-sm"
+                  >
+                    <span>📊</span> Export Sales CSV
+                  </button>
+                  <button 
+                    onClick={() => window.print()}
+                    className="px-4 py-2 bg-slate-800 hover:bg-slate-700 text-white rounded-lg text-xs font-bold transition-all flex items-center gap-1.5 cursor-pointer shadow-sm"
+                  >
+                    <span>🖨️</span> Print PDF Summary
+                  </button>
+                </div>
+              </div>
+
+              {/* Grid of details */}
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                
+                {/* SVG CATEGORY SHARE DONUT */}
+                <div className="bg-white border border-[#e2e8f0] p-5 rounded-2xl space-y-4">
+                  <div>
+                    <h4 className="text-xs font-bold text-slate-800 uppercase tracking-wider">Revenue Share by Category</h4>
+                    <p className="text-[10px] text-slate-400">Visual share of sales totals across categories</p>
+                  </div>
+                  
+                  {totalCategoryRevenue === 0 ? (
+                    <div className="h-64 flex flex-col items-center justify-center text-slate-400 text-xs">
+                      <span>No paid category sales logged yet.</span>
+                    </div>
+                  ) : (
+                    <div className="flex flex-col sm:flex-row items-center justify-around gap-4 py-4">
+                      {/* SVG Pie Chart */}
+                      <svg width="180" height="180" viewBox="0 0 36 36" className="transform -rotate-90">
+                        <circle cx="18" cy="18" r="15.915" fill="transparent" stroke="#f1f5f9" strokeWidth="3" />
+                        {donutSlices.map((slice, idx) => {
+                          const strokeDashArray = `${slice.pct * 100} ${100 - slice.pct * 100}`;
+                          const strokeDashOffset = 100 - slice.startPct * 100;
+                          return (
+                            <circle
+                              key={idx}
+                              cx="18"
+                              cy="18"
+                              r="15.915"
+                              fill="transparent"
+                              stroke={slice.color}
+                              strokeWidth="3.5"
+                              strokeDasharray={strokeDashArray}
+                              strokeDashoffset={strokeDashOffset}
+                              className="transition-all duration-300"
+                            />
+                          );
+                        })}
+                      </svg>
+
+                      {/* Legend */}
+                      <div className="space-y-2">
+                        {donutSlices.map((slice, idx) => (
+                          <div key={idx} className="flex items-center gap-2 text-xs">
+                            <span className="w-3 h-3 rounded-full" style={{ backgroundColor: slice.color }} />
+                            <span className="text-slate-600 capitalize font-medium">{slice.category}:</span>
+                            <span className="font-bold text-slate-800">₹{slice.value.toFixed(2)} ({(slice.pct * 100).toFixed(0)}%)</span>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                </div>
+
+                {/* SVG MONTHLY REVENUE BAR CHART */}
+                <div className="bg-white border border-[#e2e8f0] p-5 rounded-2xl space-y-4">
+                  <div>
+                    <h4 className="text-xs font-bold text-slate-800 uppercase tracking-wider">Transaction Breakdown</h4>
+                    <p className="text-[10px] text-slate-400">Order payment status counts</p>
+                  </div>
+
+                  <div className="h-64 flex flex-col justify-end space-y-4">
+                    <div className="grid grid-cols-3 gap-4 items-end flex-1 pb-2 border-b border-slate-100">
+                      {[
+                        { label: 'Paid', val: orders.filter(o => o.orderStatus === 'Paid').length, color: 'bg-emerald-500' },
+                        { label: 'Draft', val: orders.filter(o => o.orderStatus === 'Draft').length, color: 'bg-indigo-500' },
+                        { label: 'Cancelled', val: orders.filter(o => o.orderStatus === 'Cancelled').length, color: 'bg-rose-500' },
+                      ].map((item, idx) => {
+                        const maxCount = Math.max(...[orders.filter(o => o.orderStatus === 'Paid').length, orders.filter(o => o.orderStatus === 'Draft').length, orders.filter(o => o.orderStatus === 'Cancelled').length, 1]);
+                        const heightPct = (item.val / maxCount) * 80;
+                        return (
+                          <div key={idx} className="flex flex-col items-center gap-2">
+                            <span className="text-[10px] font-bold text-slate-700">{item.val}</span>
+                            <div 
+                              className={`w-full rounded-t-lg transition-all duration-500 ${item.color}`}
+                              style={{ height: `${Math.max(5, heightPct)}%` }}
+                            />
+                            <span className="text-[10px] font-semibold text-slate-400">{item.label}</span>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                </div>
+
+              </div>
+
+              {/* Transaction Register Table */}
+              <div className="bg-white border border-slate-200 rounded-xl overflow-hidden shadow-sm">
+                <div className="p-4 border-b border-slate-200 bg-slate-50 flex items-center justify-between">
+                  <span className="text-xs font-bold text-slate-700">Recent Transactions Register</span>
+                  <span className="text-[10px] bg-purple-50 text-purple-700 px-2 py-0.5 rounded font-bold border border-purple-200">
+                    {orders.length} Total Logs
+                  </span>
+                </div>
+                <div className="overflow-x-auto text-xs">
+                  <table className="w-full text-left border-collapse">
+                    <thead>
+                      <tr className="bg-slate-100 border-b border-slate-200 text-slate-400 font-bold uppercase tracking-wider text-[10px]">
+                        <th className="p-3">Ticket</th>
+                        <th className="p-3">Customer</th>
+                        <th className="p-3">Date</th>
+                        <th className="p-3">KDS Status</th>
+                        <th className="p-3">Payment</th>
+                        <th className="p-3 text-right">Total (INR)</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-100">
+                      {orders.slice(0, 10).map((o, idx) => (
+                        <tr key={idx} className="hover:bg-slate-50/50">
+                          <td className="p-3 font-mono font-bold text-slate-600">{o.ticketNumber}</td>
+                          <td className="p-3 font-medium text-slate-800">{o.customer}</td>
+                          <td className="p-3 text-slate-400">{new Date(o.createdAt).toLocaleString()}</td>
+                          <td className="p-3">
+                            <span className={`px-2 py-0.5 rounded-full text-[9px] font-bold border ${
+                              o.status === 'Completed' ? 'bg-green-50 text-green-700 border-green-200' :
+                              o.status === 'Preparing' ? 'bg-amber-50 text-amber-700 border-amber-200' :
+                              'bg-slate-50 text-slate-600 border-slate-200'
+                            }`}>
+                              {o.status}
+                            </span>
+                          </td>
+                          <td className="p-3">
+                            <span className={`px-2 py-0.5 rounded-full text-[9px] font-bold border ${
+                              o.orderStatus === 'Paid' ? 'bg-emerald-50 text-emerald-700 border-emerald-200' :
+                              o.orderStatus === 'Cancelled' ? 'bg-rose-50 text-rose-700 border-rose-200' :
+                              'bg-indigo-50 text-indigo-700 border-indigo-200'
+                            }`}>
+                              {o.orderStatus}
+                            </span>
+                          </td>
+                          <td className="p-3 font-bold text-slate-850 text-right">₹{o.total.toFixed(2)}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+
+            </div>
+          );
+        })()}
 
       </div>
     </div>

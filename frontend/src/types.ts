@@ -33,6 +33,7 @@ export interface Order {
   promoCode?: string;
   discount: number; // total discount in currency
   notes?: string;
+  tableNumber?: number;
 }
 
 export interface SeatingTable {
@@ -40,6 +41,8 @@ export interface SeatingTable {
   number: number;
   capacity: number;
   status: 'Available' | 'Occupied' | 'Reserved' | 'Maintenance';
+  floor_id?: number;
+  floor_name?: string;
 }
 
 export interface PromoCode {
@@ -53,4 +56,42 @@ export interface Category {
   id: string;
   name: string;
   color: string; // hex code or tailwind color
+  is_active?: boolean;
 }
+
+export interface Shop {
+  id: number;
+  name: string;
+  address?: string;
+  phone?: string;
+  is_active: boolean;
+  created_at?: string;
+}
+
+export interface Floor {
+  id: number;
+  shop_id: number;
+  name: string;
+}
+
+export interface Payment {
+  id: number;
+  order_id: string;
+  amount: number;
+  payment_method: string;
+  transaction_ref?: string;
+  status: string;
+  created_at: string;
+}
+
+export interface Session {
+  id: number;
+  shop_id: number;
+  opened_by_user_id: number;
+  opening_date: string;
+  closing_date?: string;
+  closing_sale_amount: number;
+  status: 'Open' | 'Closed';
+  employee_name?: string;
+}
+
