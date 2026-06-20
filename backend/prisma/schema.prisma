@@ -1,0 +1,169 @@
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+model Franchise {
+  id        BigInt     @id @default(autoincrement()) @db.BigInt
+  name      String     @db.VarChar(100)
+  createdAt DateTime   @default(now()) @map("created_at")
+  updatedAt DateTime   @updatedAt @map("updated_at")
+  branches  Branch[]
+  users     User[]
+  categories Category[]
+  coupons    Coupon[]
+
+  @@map("franchises")
+}
+
+model Branch {
+  id             BigInt          @id @default(autoincrement()) @db.BigInt
+  franchiseId    BigInt          @map("franchise_id") @db.BigInt
+  franchise      Franchise       @relation(fields: [franchiseId], references: [id], onDelete: Cascade)
+  name           String          @db.VarChar(100)
+  location       String          @db.VarChar(255)
+  users          User[]
+  floors         Floor[]
+  posSessions    PosSession[]
+  branchProducts BranchProduct[]
+  orders         Order[]
+  coupons        Coupon[]
+
+  @@map("branches")
+}
+
+model User {
+  id           BigInt       @id @default(autoincrement()) @db.BigInt
+  franchiseId  BigInt?      @map("franchise_id") @db.BigInt
+  franchise    Franchise?   @relation(fields: [franchiseId], references: [id])
+  branchId     BigInt?      @map("branch_id") @db.BigInt
+  branch       Branch?      @relation(fields: [branchId], references: [id])
+  email        String       @unique @db.VarChar(150)
+  passwordHash String       @map("password_hash") @db.VarChar(255)
+  role         String       @db.VarChar(50) // 'super_admin', 'franchise_admin', 'branch_admin', 'waiter', 'kitchen_staff'
+  posSessions  PosSession[]
+
+  @@index([email], name: "idx_users_email")
+  @@map("users")
+}
+
+model Floor {
+  id       BigInt   @id @default(autoincrement()) @db.BigInt
+  branchId BigInt   @map("branch_id") @db.BigInt
+  branch   Branch   @relation(fields: [branchId], references: [id], onDelete: Cascade)
+  name     String   @db.VarChar(50)
+  tables   Table[]
+
+  @@map("floors")
+}
+
+model Table {
+  id          BigInt  @id @default(autoincrement()) @db.BigInt
+  floorId     BigInt  @map("floor_id") @db.BigInt
+  floor       Floor   @relation(fields: [floorId], references: [id], onDelete: Cascade)
+  tableNumber Int     @map("table_number") @db.Integer
+  isOccupied  Boolean @default(false) @map("is_occupied") @db.Boolean
+  orders      Order[]
+
+  @@unique([floorId, tableNumber])
+  @@map("tables")
+}
+
+model PosSession {
+  id             BigInt    @id @default(autoincrement()) @db.BigInt
+  branchId       BigInt    @map("branch_id") @db.BigInt
+  branch         Branch    @relation(fields: [branchId], references: [id])
+  userId         BigInt    @map("user_id") @db.BigInt
+  user           User      @relation(fields: [userId], references: [id], onDelete: Restrict)
+  status         String    @db.VarChar(20) // 'open', 'closed'
+  openingBalance Decimal   @map("opening_balance") @db.Decimal(10, 2)
+  closingBalance Decimal?  @map("closing_balance") @db.Decimal(10, 2)
+  orders         Order[]
+
+  @@map("pos_sessions")
+}
+
+model Category {
+  id          BigInt    @id @default(autoincrement()) @db.BigInt
+  franchiseId BigInt    @map("franchise_id") @db.BigInt
+  franchise   Franchise @relation(fields: [franchiseId], references: [id])
+  name        String    @db.VarChar(50)
+  products    Product[]
+
+  @@map("categories")
+}
+
+model Product {
+  id             BigInt          @id @default(autoincrement()) @db.BigInt
+  categoryId     BigInt          @map("category_id") @db.BigInt
+  category       Category        @relation(fields: [categoryId], references: [id], onDelete: Restrict)
+  name           String          @db.VarChar(150)
+  description    String?         @db.Text
+  branchProducts BranchProduct[]
+  orderItems     OrderItem[]
+
+  @@map("products")
+}
+
+model BranchProduct {
+  id          BigInt   @id @default(autoincrement()) @db.BigInt
+  branchId    BigInt   @map("branch_id") @db.BigInt
+  branch      Branch   @relation(fields: [branchId], references: [id], onDelete: Cascade)
+  productId   BigInt   @map("product_id") @db.BigInt
+  product     Product  @relation(fields: [productId], references: [id], onDelete: Cascade)
+  price       Decimal  @db.Decimal(10, 2)
+  isAvailable Boolean  @default(true) @map("is_available") @db.Boolean
+
+  @@unique([branchId, productId])
+  @@index([branchId, productId], name: "idx_branch_products_lookup")
+  @@map("branch_products")
+}
+
+model Order {
+  id            BigInt      @id @default(autoincrement()) @db.BigInt
+  branchId      BigInt      @map("branch_id") @db.BigInt
+  branch        Branch      @relation(fields: [branchId], references: [id])
+  sessionId     BigInt      @map("session_id") @db.BigInt
+  session       PosSession  @relation(fields: [sessionId], references: [id])
+  tableId       BigInt?     @map("table_id") @db.BigInt
+  table         Table?      @relation(fields: [tableId], references: [id], onDelete: SetNull)
+  status        String      @db.VarChar(50) // 'draft', 'sent_to_kitchen', 'preparing', 'ready', 'paid'
+  totalAmount   Decimal     @map("total_amount") @db.Decimal(10, 2)
+  taxAmount     Decimal     @map("tax_amount") @db.Decimal(10, 2)
+  finalAmount   Decimal     @map("final_amount") @db.Decimal(10, 2)
+  paymentMethod String?     @map("payment_method") @db.VarChar(50) // 'cash', 'upi', 'card'
+  orderItems    OrderItem[]
+
+  @@index([branchId, status], name: "idx_orders_branch_status")
+  @@map("orders")
+}
+
+model OrderItem {
+  id            BigInt    @id @default(autoincrement()) @db.BigInt
+  orderId       BigInt    @map("order_id") @db.BigInt
+  order         Order     @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  productId     BigInt    @map("product_id") @db.BigInt
+  product       Product   @relation(fields: [productId], references: [id], onDelete: Restrict)
+  quantity      Int       @db.Integer
+  unitPrice     Decimal   @map("unit_price") @db.Decimal(10, 2)
+  customerNotes String?   @map("customer_notes") @db.VarChar(255)
+  itemStatus    String    @map("item_status") @db.VarChar(50) // 'pending', 'cooking', 'ready'
+
+  @@map("order_items")
+}
+
+model Coupon {
+  id                 BigInt    @id @default(autoincrement()) @db.BigInt
+  franchiseId        BigInt    @map("franchise_id") @db.BigInt
+  franchise          Franchise @relation(fields: [franchiseId], references: [id])
+  targetBranchId     BigInt?   @map("target_branch_id") @db.BigInt
+  branch             Branch?   @relation(fields: [targetBranchId], references: [id])
+  code               String    @unique @db.VarChar(20)
+  discountPercentage Decimal   @map("discount_percentage") @db.Decimal(5, 2)
+
+  @@map("coupons")
+}
