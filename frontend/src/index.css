@@ -1,0 +1,53 @@
+@import "tailwindcss";
+
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Outfit:wght@300;400;500;600;700&display=swap');
+
+@theme {
+  --color-odoo-light: #8f6885;
+  --color-odoo: #714B67;
+  --color-odoo-dark: #58364f;
+  --color-odoo-trans: rgba(113, 75, 103, 0.08);
+  --color-odoo-transHover: rgba(113, 75, 103, 0.15);
+  --color-charcoal: #1e293b;
+  --font-sans: 'Inter', 'Outfit', sans-serif;
+}
+
+body {
+  font-family: 'Inter', 'Outfit', sans-serif;
+  @apply bg-[#f8fafc] text-[#1e293b] antialiased;
+}
+
+/* Clean UI Scrollbar customization */
+::-webkit-scrollbar {
+  width: 5px;
+  height: 5px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: #e2e8f0;
+  border-radius: 9999px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: #cbd5e1;
+}
+
+/* Micro-animations */
+@keyframes fadeIn {
+  from {
+    opacity: 0;
+    transform: scale(0.95);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+.animate-fade-in {
+  animation: fadeIn 0.2s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
