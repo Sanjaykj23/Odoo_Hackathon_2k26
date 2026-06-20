@@ -1,8 +1,8 @@
 const jwt = require('jsonwebtoken');
-const pool = require('../../db');
+const tokenCache = require('../services/tokenCache');
 
-// Verify token and attach user to request object (async to check db state)
-const verifyToken = async (req, res, next) => {
+// Verify token and attach user to request object
+const verifyToken = (req, res, next) => {
   const authHeader = req.headers['authorization'];
   const token = authHeader && authHeader.split(' ')[1];
 
@@ -12,14 +12,9 @@ const verifyToken = async (req, res, next) => {
 
   try {
     const decoded = jwt.verify(token, process.env.JWT_SECRET || 'odoocafesupersecretkey12345!');
-    
-    // Stateful check: Verify the token exists in the database and is still valid
-    const tokenCheck = await pool.query(
-      'SELECT 1 FROM jwt_tokens WHERE token = $1 AND expires_at > CURRENT_TIMESTAMP',
-      [token]
-    );
 
-    if (tokenCheck.rows.length === 0) {
+    // Stateful check: verify the token is still active in the in-memory cache
+    if (!tokenCache.hasToken(decoded.jti)) {
       return res.status(401).json({ error: 'Session expired or token revoked.' });
     }
 

@@ -1,6 +1,8 @@
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
+const crypto = require('crypto');
 const pool = require('../../db');
+const tokenCache = require('../services/tokenCache');
 
 const JWT_SECRET = process.env.JWT_SECRET || 'odoocafesupersecretkey12345!';
 
@@ -36,8 +38,13 @@ const login = async (req, res) => {
       shopName = shopRes.rows[0]?.name;
     }
 
+    // Generate a unique token ID used as the in-memory cache key
+    const jti = crypto.randomUUID();
+    const expiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000); // 24 hours
+
     const token = jwt.sign(
       {
+        jti,
         id: user.id,
         name: user.name,
         email: user.email,
@@ -49,18 +56,8 @@ const login = async (req, res) => {
       { expiresIn: '24h' }
     );
 
-    // Save token in jwt_tokens table in database (expires in 24 hours)
-    const expiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000);
-    await pool.query(
-      'INSERT INTO jwt_tokens (user_id, token, expires_at) VALUES ($1, $2, $3)',
-      [user.id, token, expiresAt]
-    );
-
-    // Clean up expired tokens for this user to keep DB clean
-    await pool.query(
-      'DELETE FROM jwt_tokens WHERE user_id = $1 AND expires_at < CURRENT_TIMESTAMP',
-      [user.id]
-    );
+    // Store token in in-memory cache — nothing written to disk or DB
+    tokenCache.addToken(jti, user.id, expiresAt);
 
     res.json({
       token,
