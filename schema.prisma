@@ -1,0 +1,47 @@
+CREATE TABLE users (
+    id SERIAL PRIMARY KEY,
+    name VARCHAR(255) NOT NULL, [cite: 23, 71]
+    email VARCHAR(255) UNIQUE NOT NULL, [cite: 23, 72]
+    password_hash VARCHAR(255) NOT NULL, [cite: 23]
+    role VARCHAR(50) NOT NULL CHECK (role IN ('SuperAdmin', 'Admin', 'Employee')), [cite: 73]
+    is_active BOOLEAN DEFAULT TRUE, [cite: 78]
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+CREATE TABLE customers (
+    id SERIAL PRIMARY KEY,
+    name VARCHAR(255) NOT NULL, [cite: 231]
+    email VARCHAR(255) NULL, -- Optional for receipt delivery [cite: 233, 239]
+    phone_number VARCHAR(20) NULL, [cite: 235]
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+CREATE TABLE sessions (
+    id SERIAL PRIMARY KEY,
+    opened_by_user_id INT REFERENCES users(id),
+    opening_date TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP, [cite: 80]
+    closing_date TIMESTAMP NULL,
+    closing_sale_amount DECIMAL(10, 2) DEFAULT 0.00, [cite: 80]
+    status VARCHAR(50) DEFAULT 'Open' CHECK (status IN ('Open', 'Closed'))
+);
+CREATE TABLE orders (
+    id SERIAL PRIMARY KEY,
+    order_number VARCHAR(100) UNIQUE NOT NULL, [cite: 210]
+    session_id INT REFERENCES sessions(id) ON DELETE CASCADE,
+    employee_id INT REFERENCES users(id) NULL, -- Nullable if placed via QR Self-Ordering [cite: 126]
+    customer_id INT REFERENCES customers(id) ON DELETE SET NULL NULL, [cite: 187]
+    table_id INT NOT NULL, -- References your floor plan system layout table 
+    subtotal DECIMAL(10, 2) NOT NULL DEFAULT 0.00, [cite: 182]
+    tax DECIMAL(10, 2) NOT NULL DEFAULT 0.00, [cite: 183]
+    discount_amount DECIMAL(10, 2) NOT NULL DEFAULT 0.00, [cite: 184]
+    total_amount DECIMAL(10, 2) NOT NULL DEFAULT 0.00, [cite: 185]
+    payment_method VARCHAR(50) NULL CHECK (payment_method IN ('Cash', 'Card', 'UPI')), [cite: 17, 44]
+    status VARCHAR(50) DEFAULT 'Draft' CHECK (status IN ('Draft', 'Paid', 'Cancelled')), [cite: 214]
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP [cite: 211]
+);
+CREATE TABLE kds_tickets (
+    id SERIAL PRIMARY KEY,
+    order_id INT REFERENCES orders(id) ON DELETE CASCADE, [cite: 243]
+    current_stage VARCHAR(50) DEFAULT 'To Cook' CHECK (current_stage IN ('To Cook', 'Preparing', 'Completed')), [cite: 247]
+    received_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP, [cite: 242]
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
