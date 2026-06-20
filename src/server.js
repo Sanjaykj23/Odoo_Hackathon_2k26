@@ -2,23 +2,33 @@ require('dotenv').config();
 const express = require('express');
 const cors = require('cors');
 const http = require('http');
+<<<<<<< HEAD
 const socketConfig = require('./config/socket');
+=======
+>>>>>>> ff227929a91111fd3e83001011bb6efa4634d10e
 const apiRoutes = require('./routes/api');
+const socketUtil = require('./config/socket');
 
 const app = express();
 const server = http.createServer(app);
 const PORT = process.env.PORT || 5000;
+const server = http.createServer(app);
 
-// Middleware
-app.use(cors({
+const corsOptions = {
   origin: '*', // Allow all origins for the hackathon prototype
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization']
-}));
+};
+
+// Middleware
+app.use(cors(corsOptions));
 app.use(express.json());
 const path = require('path');
 app.use('/public', express.static(path.join(__dirname, '../public')));
 
+
+// Initialize Sockets cleanly attached to HTTP pipeline
+socketUtil.init(server, corsOptions);
 
 // Logger middleware
 app.use((req, res, next) => {
@@ -53,7 +63,10 @@ app.use((err, req, res, next) => {
 const runMigrations = require('./migrations');
 runMigrations()
   .then(() => {
+<<<<<<< HEAD
     socketConfig.initSocket(server);
+=======
+>>>>>>> ff227929a91111fd3e83001011bb6efa4634d10e
     server.listen(PORT, () => {
       console.log(`=============================================`);
       console.log(`Odoo Cafe POS Backend running on port ${PORT}`);
@@ -63,7 +76,10 @@ runMigrations()
   })
   .catch(err => {
     console.error('Failed to run migrations. Starting server anyway...', err);
+<<<<<<< HEAD
     socketConfig.initSocket(server);
+=======
+>>>>>>> ff227929a91111fd3e83001011bb6efa4634d10e
     server.listen(PORT, () => {
       console.log(`=============================================`);
       console.log(`Odoo Cafe POS Backend running on port ${PORT} (Migration Error)`);

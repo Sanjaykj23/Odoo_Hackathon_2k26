@@ -6,8 +6,13 @@ const authController = require('../controllers/authController');
 const orderController = require('../controllers/orderController');
 const sse = require('../middleware/sse');
 const reportController = require('../controllers/reportController');
+<<<<<<< HEAD
 const paymentController = require('../controllers/paymentController');
 
+=======
+const analyticsController = require('../controllers/analyticsController');
+const shiftController = require('../controllers/shiftController');
+>>>>>>> ff227929a91111fd3e83001011bb6efa4634d10e
 
 // ==========================================
 // 1. AUTHENTICATION & USER MANAGEMENT
@@ -903,6 +908,7 @@ router.post('/public/orders', async (req, res) => {
   }
 });
 
+<<<<<<< HEAD
 // Reserve Table Endpoint
 router.post('/public/tables/:qr_token/reserve', async (req, res) => {
   const { qr_token } = req.params;
@@ -1131,6 +1137,16 @@ router.post('/public/orders/:id/checkout/cod', async (req, res) => {
 // ==========================================
 // 10. ANALYTICS & REPORTS
 // ==========================================
+=======
+>>>>>>> ff227929a91111fd3e83001011bb6efa4634d10e
 router.get('/reports', auth.verifyToken, auth.requireRole(['SuperAdmin', 'Admin']), reportController.getReports);
+
+// Analytics endpoints
+router.get('/analytics/branch', auth.verifyToken, auth.requireRole(['SuperAdmin', 'Admin', 'Employee']), analyticsController.getBranchAnalytics);
+router.get('/analytics/super', auth.verifyToken, auth.requireRole(['SuperAdmin']), analyticsController.getSuperAnalytics);
+
+// Shift reconciliation endpoints
+router.get('/shifts/previous-summary', auth.verifyToken, shiftController.getPreviousSummary);
+router.get('/shifts/current-summary', auth.verifyToken, shiftController.getCurrentSummary);
 
 module.exports = router;
