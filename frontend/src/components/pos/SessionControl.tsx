@@ -25,7 +25,7 @@ export const SessionControl: React.FC<SessionControlProps> = ({
   const handleOpenSession = async () => {
     setLoading(true);
     try {
-      const response = await fetch('http://localhost:5000/api/sessions/open', {
+      const response = await fetch('/api/sessions/open', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -56,7 +56,7 @@ export const SessionControl: React.FC<SessionControlProps> = ({
     const closingAmount = closingInput ? parseFloat(closingInput) : undefined;
 
     try {
-      const response = await fetch(`http://localhost:5000/api/sessions/${activeSession.id}/close`, {
+      const response = await fetch(`/api/sessions/${activeSession.id}/close`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',

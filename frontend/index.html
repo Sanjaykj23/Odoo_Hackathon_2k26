@@ -11,6 +11,19 @@
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     
     <title>Odoo Cafe POS — High-End POS & KDS Terminal</title>
+    <script>
+      // Polyfill for crypto.randomUUID on mobile HTTP (non-secure context)
+      if (typeof window !== 'undefined') {
+        if (!window.crypto) window.crypto = {};
+        if (!window.crypto.randomUUID) {
+          window.crypto.randomUUID = function() {
+            return '10000000-1000-4000-8000-100000000000'.replace(/[018]/g, function(c) {
+              return (c ^ (Math.random() * 256 | 0) & 15 >> c / 4).toString(16);
+            });
+          };
+        }
+      }
+    </script>
   </head>
   <body class="bg-[#f8fafc] text-[#1e293b]">
     <div id="root"></div>

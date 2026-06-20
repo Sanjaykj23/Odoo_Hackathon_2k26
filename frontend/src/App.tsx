@@ -8,6 +8,8 @@ import { SessionControl } from './components/pos/SessionControl';
 import { CustomerSelfOrderView } from './components/customer/CustomerSelfOrderView';
 import { CustomerDisplayView } from './components/customer/CustomerDisplayView';
 import { Coffee, Server, Clock } from 'lucide-react';
+import { io } from 'socket.io-client';
+
 
 function App() {
   // Authentication States
@@ -53,6 +55,28 @@ function App() {
   // Active View switching
   const [activeView, setActiveView] = useState<string>('products');
 
+  // Central authenticated fetch — auto-logs out on 401 (expired/revoked token)
+  const apiFetch = async (url: string, options: RequestInit = {}) => {
+    const currentToken = localStorage.getItem('token');
+    const headers: Record<string, string> = {
+      ...(options.headers as Record<string, string> || {}),
+    };
+    if (currentToken) {
+      headers['Authorization'] = `Bearer ${currentToken}`;
+    }
+    const res = await fetch(url, { ...options, headers });
+    if (res.status === 401) {
+      // Token is expired or revoked — force logout
+      localStorage.removeItem('token');
+      localStorage.removeItem('user');
+      setToken(null);
+      setUser(null);
+      setActiveView('products');
+      throw new Error('SESSION_EXPIRED');
+    }
+    return res;
+  };
+
   // Time tracker for visual detail
   const [currentTime] = useState(() => {
     const d = new Date();
@@ -85,16 +109,30 @@ function App() {
     setActiveView('products');
   };
 
+  // On startup: validate stored token immediately to prevent 401 flood
+  useEffect(() => {
+    const storedToken = localStorage.getItem('token');
+    if (!storedToken) return;
+    fetch('/api/products', {
+      headers: { 'Authorization': `Bearer ${storedToken}` }
+    }).then(res => {
+      if (res.status === 401) {
+        localStorage.removeItem('token');
+        localStorage.removeItem('user');
+        setToken(null);
+        setUser(null);
+      }
+    }).catch(() => {/* backend offline, ignore */});
+  }, []); // run once on mount
+
   // Load data from Backend API when logged in
   useEffect(() => {
     if (!token) return;
 
-    const headers = { 'Authorization': `Bearer ${token}` };
-
     const fetchAllData = async () => {
       try {
         // Fetch Products
-        const prodRes = await fetch('http://localhost:5000/api/products', { headers });
+        const prodRes = await apiFetch('/api/products');
         const prodData = await prodRes.json();
         if (Array.isArray(prodData)) {
           const mapped = prodData.map((p: any) => ({
@@ -112,21 +150,21 @@ function App() {
         }
 
         // Fetch Categories
-        const catRes = await fetch('http://localhost:5000/api/categories', { headers });
+        const catRes = await apiFetch('/api/categories');
         const catData = await catRes.json();
         if (Array.isArray(catData)) {
           setCategories(catData);
         }
 
         // Fetch Floors
-        const floorRes = await fetch('http://localhost:5000/api/floors', { headers });
+        const floorRes = await apiFetch('/api/floors');
         const floorData = await floorRes.json();
         if (Array.isArray(floorData)) {
           setFloors(floorData);
         }
 
         // Fetch Tables
-        const tableRes = await fetch('http://localhost:5000/api/tables', { headers });
+        const tableRes = await apiFetch('/api/tables');
         const tableData = await tableRes.json();
         if (Array.isArray(tableData)) {
           const mapped = tableData.map((t: any) => ({
@@ -135,13 +173,14 @@ function App() {
             capacity: t.seats,
             status: t.status,
             floor_id: t.floor_id,
-            floor_name: t.floor_name
+            floor_name: t.floor_name,
+            qr_token: t.qr_token  // ← include so QR codes work
           }));
           setTables(mapped);
         }
 
         // Fetch Promo Codes
-        const promoRes = await fetch('http://localhost:5000/api/promos', { headers });
+        const promoRes = await apiFetch('/api/promos');
         const promoData = await promoRes.json();
         if (Array.isArray(promoData)) {
           const mapped = promoData.map((pr: any) => ({
@@ -154,38 +193,51 @@ function App() {
         }
 
         // Fetch Orders
-        const orderRes = await fetch('http://localhost:5000/api/orders', { headers });
+        const orderRes = await apiFetch('/api/orders');
         const orderData = await orderRes.json();
         if (Array.isArray(orderData)) {
           setOrders(orderData);
         }
 
         // Fetch Sessions
-        const sessRes = await fetch('http://localhost:5000/api/sessions', { headers });
+        const sessRes = await apiFetch('/api/sessions');
         const sessData = await sessRes.json();
         if (Array.isArray(sessData)) {
           setSessions(sessData);
           const openSess = sessData.find((s: any) => s.status === 'Open');
           setActiveSession(openSess || null);
         }
-      } catch (err) {
-        console.error('Error fetching data from API:', err);
+      } catch (err: any) {
+        if (err?.message !== 'SESSION_EXPIRED') {
+          console.error('Error fetching data from API:', err);
+        }
       }
     };
 
     fetchAllData();
 
-    // SSE Connection for Real-time synchronizations
-    const eventSource = new EventSource('http://localhost:5000/api/events');
+    // Socket.IO — polling-first so React StrictMode double-invoke doesn't crash
+    const socket = io('', {
+      transports: ['polling', 'websocket'],
+      autoConnect: false,
+    });
 
-    eventSource.onmessage = (event) => {
+    // Join the appropriate shop room
+    if (user && user.shop_id) {
+      socket.once('connect', () => socket.emit('join_shop', { shop_id: user.shop_id }));
+    } else {
+      socket.once('connect', () => socket.emit('join_shop', {}));
+    }
+
+    socket.connect();
+
+    const handleMessage = (data: any) => {
       try {
-        const data = JSON.parse(event.data);
         const { type, payload } = data;
 
         switch (type) {
           case 'CONNECTED':
-            console.log('[SSE] Connection confirmed:', payload);
+            console.log('[Socket] Connection confirmed:', payload);
             break;
           case 'ORDER_CREATED':
             setOrders(prev => {
@@ -240,7 +292,8 @@ function App() {
                 capacity: payload.seats,
                 status: payload.status,
                 floor_id: payload.floor_id,
-                floor_name: payload.floor_name
+                floor_name: payload.floor_name,
+                qr_token: payload.qr_token  // preserve QR token
               };
               if (prev.some(t => t.id === payload.id)) {
                 return prev.map(t => t.id === payload.id ? mapped : t);
@@ -283,15 +336,17 @@ function App() {
             break;
         }
       } catch (err) {
-        console.error('[SSE] Failed to parse message event data:', err);
+        console.error('[Socket] Failed to parse message event data:', err);
       }
     };
 
+    socket.on('message', handleMessage);
+
     return () => {
-      eventSource.close();
-      console.log('[SSE] Connection closed.');
+      socket.off('message', handleMessage);
+      socket.disconnect();
     };
-  }, [token]);
+  }, [token]);  // ← only reconnect when token changes (login/logout)
 
   // State Modifiers (Transactional API Logic)
   const handleSendToKitchen = async (
@@ -344,7 +399,7 @@ function App() {
     };
 
     try {
-      const response = await fetch('http://localhost:5000/api/orders', {
+      const response = await fetch('/api/orders', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -366,7 +421,7 @@ function App() {
     if (!token) return;
 
     try {
-      const response = await fetch(`http://localhost:5000/api/orders/${orderId}/kds`, {
+      const response = await fetch(`/api/orders/${orderId}/kds`, {
         method: 'PUT',
         headers: {
           'Content-Type': 'application/json',
@@ -394,7 +449,7 @@ function App() {
     if (!item) return;
 
     try {
-      const response = await fetch(`http://localhost:5000/api/orders/${orderId}/items/${item.product.id}/fulfill`, {
+      const response = await fetch(`/api/orders/${orderId}/items/${item.product.id}/fulfill`, {
         method: 'PUT',
         headers: { 'Authorization': `Bearer ${token}` }
       });
@@ -424,7 +479,7 @@ function App() {
       if (!confirmDelete) return;
 
       try {
-        const response = await fetch(`http://localhost:5000/api/orders/${orderId}`, {
+        const response = await fetch(`/api/orders/${orderId}`, {
           method: 'DELETE',
           headers: { 'Authorization': `Bearer ${token}` }
         });

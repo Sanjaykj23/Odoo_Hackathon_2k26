@@ -1,3 +1,5 @@
+const socketConfig = require('../config/socket');
+
 let clients = [];
 
 const register = (req, res) => {
@@ -45,9 +47,18 @@ const broadcast = (type, payload) => {
       console.error(`[SSE] Failed to write to client ${client.id}:`, err);
     }
   });
+
+  // Dual-broadcast via Socket.IO
+  try {
+    const shopId = payload?.shop_id || payload?.shopId || null;
+    socketConfig.broadcast(shopId, type, payload);
+  } catch (err) {
+    console.error(`[Socket] Broadcast failed:`, err);
+  }
 };
 
 module.exports = {
   register,
   broadcast
 };
+

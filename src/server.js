@@ -1,9 +1,12 @@
 require('dotenv').config();
 const express = require('express');
 const cors = require('cors');
+const http = require('http');
+const socketConfig = require('./config/socket');
 const apiRoutes = require('./routes/api');
 
 const app = express();
+const server = http.createServer(app);
 const PORT = process.env.PORT || 5000;
 
 // Middleware
@@ -13,6 +16,9 @@ app.use(cors({
   allowedHeaders: ['Content-Type', 'Authorization']
 }));
 app.use(express.json());
+const path = require('path');
+app.use('/public', express.static(path.join(__dirname, '../public')));
+
 
 // Logger middleware
 app.use((req, res, next) => {
@@ -26,6 +32,11 @@ app.get('/api/events', sse.register);
 
 // API Routes
 app.use('/api', apiRoutes);
+
+// Advanced POS Routes
+app.use('/api/v2/shops', require('./routes/shopRoutes'));
+app.use('/api/booking', require('./routes/bookingRoutes'));
+app.use('/api/payments', require('./routes/paymentRoutes'));
 
 // Base Route
 app.get('/', (req, res) => {
@@ -42,7 +53,8 @@ app.use((err, req, res, next) => {
 const runMigrations = require('./migrations');
 runMigrations()
   .then(() => {
-    app.listen(PORT, () => {
+    socketConfig.initSocket(server);
+    server.listen(PORT, () => {
       console.log(`=============================================`);
       console.log(`Odoo Cafe POS Backend running on port ${PORT}`);
       console.log(`API base URL: http://localhost:${PORT}/api`);
@@ -51,7 +63,8 @@ runMigrations()
   })
   .catch(err => {
     console.error('Failed to run migrations. Starting server anyway...', err);
-    app.listen(PORT, () => {
+    socketConfig.initSocket(server);
+    server.listen(PORT, () => {
       console.log(`=============================================`);
       console.log(`Odoo Cafe POS Backend running on port ${PORT} (Migration Error)`);
       console.log(`API base URL: http://localhost:${PORT}/api`);

@@ -26,6 +26,7 @@ export interface Order {
   ticketNumber: string;
   items: OrderItem[];
   status: 'To Cook' | 'Preparing' | 'Completed';
+  orderStatus?: 'Draft' | 'Paid' | 'Cancelled' | 'To Pay';
   createdAt: string; // ISO String
   elapsed: number; // minutes elapsed
   total: number;
@@ -36,6 +37,7 @@ export interface Order {
   tableNumber?: number;
 }
 
+
 export interface SeatingTable {
   id: string;
   number: number;
@@ -43,6 +45,7 @@ export interface SeatingTable {
   status: 'Available' | 'Occupied' | 'Reserved' | 'Maintenance';
   floor_id?: number;
   floor_name?: string;
+  qr_token?: string;  // the unique QR scan token
 }
 
 export interface PromoCode {

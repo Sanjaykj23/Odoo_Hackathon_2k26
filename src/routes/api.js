@@ -6,6 +6,8 @@ const authController = require('../controllers/authController');
 const orderController = require('../controllers/orderController');
 const sse = require('../middleware/sse');
 const reportController = require('../controllers/reportController');
+const paymentController = require('../controllers/paymentController');
+
 
 // ==========================================
 // 1. AUTHENTICATION & USER MANAGEMENT
@@ -38,17 +40,50 @@ router.get('/shops', auth.verifyToken, async (req, res) => {
 
 // Create Shop (SuperAdmin Only)
 router.post('/shops', auth.verifyToken, auth.requireRole(['SuperAdmin']), async (req, res) => {
-  const { name, address, phone } = req.body;
+  const { name, address, phone, table_capacities } = req.body;
   if (!name) return res.status(400).json({ error: 'Shop name is required.' });
 
+  const client = await pool.connect();
   try {
-    const newShop = await pool.query(
+    await client.query('BEGIN');
+
+    const newShop = await client.query(
       'INSERT INTO shops (name, address, phone) VALUES ($1, $2, $3) RETURNING *',
       [name, address, phone]
     );
-    res.status(201).json(newShop.rows[0]);
+    const shop = newShop.rows[0];
+
+    // Create a default floor for this shop
+    const defaultFloor = await client.query(
+      "INSERT INTO floors (shop_id, name) VALUES ($1, 'Main Floor') RETURNING id",
+      [shop.id]
+    );
+    const floorId = defaultFloor.rows[0].id;
+
+    // Create tables if capacities are provided
+    if (Array.isArray(table_capacities) && table_capacities.length > 0) {
+      const crypto = require('crypto');
+      for (let i = 0; i < table_capacities.length; i++) {
+        const tableNum = i + 1;
+        const seats = parseInt(table_capacities[i]) || 2;
+        const tableId = `tbl-${shop.id}-${tableNum}`;
+        const qrToken = `token_${shop.id}_${tableNum}_${crypto.randomBytes(4).toString('hex')}`;
+
+        await client.query(
+          `INSERT INTO tables (id, floor_id, table_number, seats, status, qr_token)
+           VALUES ($1, $2, $3, $4, 'Available', $5)`,
+          [tableId, floorId, tableNum, seats, qrToken]
+        );
+      }
+    }
+
+    await client.query('COMMIT');
+    res.status(201).json(shop);
   } catch (err) {
+    await client.query('ROLLBACK');
     res.status(500).json({ error: err.message });
+  } finally {
+    client.release();
   }
 });
 
@@ -180,7 +215,7 @@ router.post('/products', auth.verifyToken, auth.requireRole(['SuperAdmin', 'Admi
            popularity = EXCLUDED.popularity, cost_index = EXCLUDED.cost_index, country = EXCLUDED.country
        RETURNING *`,
       [
-        id, targetShopId, category_id, price, uom || 'per piece', tax || 5.00, description, image_url,
+        id, targetShopId, category_id, name, price, uom || 'per piece', tax || 5.00, description, image_url,
         popularity !== undefined ? parseInt(popularity) : 4,
         cost_index !== undefined ? parseInt(cost_index) : 2,
         country || 'India'
@@ -407,6 +442,45 @@ router.put('/tables/:id/status', auth.verifyToken, async (req, res) => {
     );
     sse.broadcast('TABLE_UPDATED', tableWithFloor.rows[0]);
     res.json({ message: 'Table status updated successfully.', table: result.rows[0] });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Edit Table Capacity (SuperAdmin and Admin)
+router.put('/tables/:id/capacity', auth.verifyToken, auth.requireRole(['SuperAdmin', 'Admin']), async (req, res) => {
+  const { id } = req.params;
+  const { capacity } = req.body;
+  
+  if (capacity === undefined || isNaN(parseInt(capacity))) {
+    return res.status(400).json({ error: 'Valid capacity is required.' });
+  }
+
+  try {
+    const checkRes = await pool.query(
+      `SELECT f.shop_id FROM tables t 
+       JOIN floors f ON t.floor_id = f.id 
+       WHERE t.id = $1`,
+      [id]
+    );
+    if (checkRes.rows.length === 0) return res.status(404).json({ error: 'Table not found.' });
+    if (req.user.role !== 'SuperAdmin' && checkRes.rows[0].shop_id !== req.user.shop_id) {
+      return res.status(403).json({ error: 'Forbidden. Table belongs to another shop.' });
+    }
+
+    const result = await pool.query(
+      'UPDATE tables SET seats = $1 WHERE id = $2 RETURNING *',
+      [parseInt(capacity), id]
+    );
+
+    const tableWithFloor = await pool.query(
+      `SELECT t.*, f.name as floor_name FROM tables t 
+       JOIN floors f ON t.floor_id = f.id 
+       WHERE t.id = $1`,
+      [id]
+    );
+    sse.broadcast('TABLE_UPDATED', tableWithFloor.rows[0]);
+    res.json({ message: 'Table capacity updated successfully.', table: result.rows[0] });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -680,7 +754,8 @@ router.get('/public/table/:qrToken', async (req, res) => {
   const { qrToken } = req.params;
 
   try {
-    const tableRes = await pool.query(
+    // Try by qr_token first, then fall back to table id (for legacy/test URLs)
+    let tableRes = await pool.query(
       `SELECT t.*, f.name as floor_name, f.shop_id, s.name as shop_name, s.address as shop_address 
        FROM tables t 
        JOIN floors f ON t.floor_id = f.id 
@@ -689,23 +764,28 @@ router.get('/public/table/:qrToken', async (req, res) => {
       [qrToken]
     );
 
+    // Fallback: try matching by table id
     if (tableRes.rows.length === 0) {
-      return res.status(404).json({ error: 'Invalid QR token or table not found.' });
+      tableRes = await pool.query(
+        `SELECT t.*, f.name as floor_name, f.shop_id, s.name as shop_name, s.address as shop_address 
+         FROM tables t 
+         JOIN floors f ON t.floor_id = f.id 
+         JOIN shops s ON f.shop_id = s.id 
+         WHERE t.id = $1`,
+        [qrToken]
+      );
+    }
+
+    if (tableRes.rows.length === 0) {
+      return res.status(404).json({ error: 'Table not found. Please scan the QR code again.' });
     }
     const tableInfo = tableRes.rows[0];
 
-    const categoriesRes = await pool.query(
-      'SELECT * FROM categories WHERE shop_id = $1 AND is_active = true ORDER BY name',
-      [tableInfo.shop_id]
-    );
-    const productsRes = await pool.query(
-      'SELECT * FROM products WHERE shop_id = $1 AND is_available = true ORDER BY name',
-      [tableInfo.shop_id]
-    );
-    const promosRes = await pool.query(
-      'SELECT * FROM coupons_promotions WHERE shop_id = $1 AND is_active = true ORDER BY code',
-      [tableInfo.shop_id]
-    );
+    const [categoriesRes, productsRes, promosRes] = await Promise.all([
+      pool.query('SELECT * FROM categories WHERE shop_id = $1 AND is_active = true ORDER BY name', [tableInfo.shop_id]),
+      pool.query('SELECT * FROM products WHERE shop_id = $1 AND is_available = true ORDER BY name', [tableInfo.shop_id]),
+      pool.query('SELECT * FROM coupons_promotions WHERE shop_id = $1 AND is_active = true ORDER BY code', [tableInfo.shop_id])
+    ]);
 
     res.json({
       table: {
@@ -743,7 +823,8 @@ router.post('/public/orders', async (req, res) => {
     discount_amount,
     total_amount,
     notes,
-    customer_name
+    customer_name,
+    guest_count
   } = req.body;
 
   if (!qr_token || !table_id || !items || items.length === 0) {
@@ -771,14 +852,14 @@ router.post('/public/orders', async (req, res) => {
     const orderQuery = `
       INSERT INTO orders (
         id, order_number, shop_id, session_id, employee_id, customer_id, table_id, 
-        subtotal, tax, discount_amount, total_amount, payment_method, status, kds_status, notes, customer_name
-      ) VALUES ($1, $2, $3, null, null, null, $4, $5, $6, $7, $8, null, 'Draft', 'To Cook', $9, $10)
+        subtotal, tax, discount_amount, total_amount, payment_method, status, kds_status, notes, customer_name, guest_count
+      ) VALUES ($1, $2, $3, null, null, null, $4, $5, $6, $7, $8, null, 'Draft', 'To Cook', $9, $10, $11)
       RETURNING *
     `;
     const orderRes = await client.query(orderQuery, [
       orderId, orderNum, shop_id, table_id,
       subtotal || 0.00, tax || 0.00, discount_amount || 0.00, total_amount || 0.00, 
-      notes || null, customer_name || 'Table Guest'
+      notes || null, customer_name || 'Table Guest', guest_count || 1
     ]);
     const createdOrder = orderRes.rows[0];
 
@@ -816,6 +897,231 @@ router.post('/public/orders', async (req, res) => {
   } catch (err) {
     await client.query('ROLLBACK');
     console.error('Error placing public self-order:', err);
+    res.status(500).json({ error: err.message });
+  } finally {
+    client.release();
+  }
+});
+
+// Reserve Table Endpoint
+router.post('/public/tables/:qr_token/reserve', async (req, res) => {
+  const { qr_token } = req.params;
+  const { guest_count, customer_name, phone, email } = req.body;
+
+  if (!guest_count || isNaN(parseInt(guest_count))) {
+    return res.status(400).json({ error: 'Valid guest count is required.' });
+  }
+
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+
+    // Find table details
+    const tableRes = await client.query(
+      `SELECT t.*, f.name as floor_name, f.shop_id 
+       FROM tables t 
+       JOIN floors f ON t.floor_id = f.id 
+       WHERE t.qr_token = $1 OR t.id = $1`,
+      [qr_token]
+    );
+
+    if (tableRes.rows.length === 0) {
+      await client.query('ROLLBACK');
+      return res.status(404).json({ error: 'Invalid QR token or table not found.' });
+    }
+
+    const table = tableRes.rows[0];
+
+    // Check capacity
+    if (parseInt(guest_count) > table.seats) {
+      await client.query('ROLLBACK');
+      return res.status(400).json({ 
+        error: `Requested seats (${guest_count}) exceeds table capacity (${table.seats}). Please contact a waiter.` 
+      });
+    }
+
+    // Insert or find customer
+    let customerId = null;
+    if (customer_name) {
+      const custRes = await client.query(
+        `INSERT INTO customers (name, phone_number, email) 
+         VALUES ($1, $2, $3) 
+         RETURNING id`,
+        [customer_name, phone || null, email || null]
+      );
+      customerId = custRes.rows[0].id;
+    }
+
+    // Set table status to Occupied
+    const updatedTable = await client.query(
+      "UPDATE tables SET status = 'Occupied' WHERE id = $1 RETURNING *",
+      [table.id]
+    );
+
+    await client.query('COMMIT');
+
+    const tableWithFloor = {
+      ...updatedTable.rows[0],
+      floor_name: table.floor_name,
+      shop_id: table.shop_id
+    };
+
+    // Broadcast change
+    sse.broadcast('TABLE_UPDATED', tableWithFloor);
+
+    res.json({
+      message: 'Reservation successful.',
+      table: tableWithFloor,
+      customerId
+    });
+  } catch (err) {
+    await client.query('ROLLBACK');
+    res.status(500).json({ error: err.message });
+  } finally {
+    client.release();
+  }
+});
+
+// End Session Endpoint (Public)
+router.post('/public/tables/:table_id/end-session', async (req, res) => {
+  const { table_id } = req.params;
+  const client = await pool.connect();
+  try {
+    // Find table by either id or qr_token
+    const tableRes = await client.query(
+      `SELECT * FROM tables WHERE id = $1 OR qr_token = $1`,
+      [table_id]
+    );
+    if (tableRes.rows.length === 0) {
+      return res.status(404).json({ error: 'Table not found.' });
+    }
+    const table = tableRes.rows[0];
+
+    // Set table status back to Available
+    const updatedTable = await client.query(
+      "UPDATE tables SET status = 'Available' WHERE id = $1 RETURNING *",
+      [table.id]
+    );
+
+    // Broadcast change
+    const tableWithFloorRes = await client.query(
+      `SELECT t.*, f.name as floor_name FROM tables t JOIN floors f ON t.floor_id = f.id WHERE t.id = $1`,
+      [table.id]
+    );
+    if (tableWithFloorRes.rows.length > 0) {
+      sse.broadcast('TABLE_UPDATED', tableWithFloorRes.rows[0]);
+    }
+
+    res.json({ message: 'Session ended successfully.', table: updatedTable.rows[0] });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  } finally {
+    client.release();
+  }
+});
+
+// Table Order History Endpoint
+router.get('/public/tables/:table_id/history', async (req, res) => {
+  const { table_id } = req.params;
+
+  try {
+    const result = await pool.query(
+      `SELECT o.*, 
+              COALESCE(
+                json_agg(
+                  json_build_object(
+                    'product_id', oi.product_id,
+                    'quantity', oi.quantity,
+                    'unit_price', oi.unit_price,
+                    'line_total', oi.line_total,
+                    'product_name', p.name
+                  )
+                ) FILTER (WHERE oi.id IS NOT NULL),
+                '[]'
+              ) as items
+       FROM orders o
+       LEFT JOIN order_items oi ON o.id = oi.order_id
+       LEFT JOIN products p ON oi.product_id = p.id
+       WHERE o.table_id = $1 
+         AND o.created_at >= CURRENT_DATE 
+         AND o.status != 'Cancelled'
+       GROUP BY o.id
+       ORDER BY o.created_at DESC`,
+      [table_id]
+    );
+
+    res.json(result.rows);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Razorpay Payments
+router.post('/payments/razorpay/order', paymentController.createRazorpayOrder);
+router.post('/payments/razorpay/verify', paymentController.verifyPayment);
+
+// COD Checkout Endpoint
+router.post('/public/orders/:id/checkout/cod', async (req, res) => {
+  const { id } = req.params;
+  const { phone } = req.body;
+
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+
+    // Fetch order details
+    const orderRes = await client.query('SELECT * FROM orders WHERE id = $1', [id]);
+    if (orderRes.rows.length === 0) {
+      await client.query('ROLLBACK');
+      return res.status(404).json({ error: 'Order not found.' });
+    }
+    const order = orderRes.rows[0];
+
+    // Create customer entry if phone supplied
+    if (phone && !order.customer_id) {
+      const custRes = await client.query(
+        "INSERT INTO customers (name, phone_number) VALUES ($1, $2) RETURNING id",
+        [order.customer_name || 'Table Guest', phone]
+      );
+      await client.query("UPDATE orders SET customer_id = $1 WHERE id = $2", [custRes.rows[0].id, id]);
+    }
+
+    // Update order status to 'To Pay' and payment_method to 'Cash'
+    const updatedOrderRes = await client.query(
+      `UPDATE orders 
+       SET status = 'To Pay', payment_method = 'Cash', updated_at = CURRENT_TIMESTAMP 
+       WHERE id = $1 
+       RETURNING *`,
+      [id]
+    );
+    const updatedOrder = updatedOrderRes.rows[0];
+
+    await client.query("UPDATE tables SET status = 'Occupied' WHERE id = $1", [order.table_id]);
+    const tableRes = await client.query(
+      `SELECT t.*, f.name as floor_name FROM tables t 
+       JOIN floors f ON t.floor_id = f.id 
+       WHERE t.id = $1`,
+      [order.table_id]
+    );
+
+    await client.query('COMMIT');
+
+    // Broadcast table and order changes
+    if (tableRes.rows.length > 0) {
+      sse.broadcast('TABLE_UPDATED', tableRes.rows[0]);
+    }
+    const fullOrder = await orderController.fetchFullOrder(id);
+    sse.broadcast('ORDER_UPDATED', fullOrder);
+
+    // Trigger WhatsApp notification asynchronously
+    const whatsappService = require('../services/whatsappService');
+    whatsappService.sendOrderConfirmation(id).catch(err => {
+      console.error('Error sending WhatsApp order confirmation:', err);
+    });
+
+    res.json({ message: 'COD checkout initiated. Please pay cash to server.', order: updatedOrder });
+  } catch (err) {
+    await client.query('ROLLBACK');
     res.status(500).json({ error: err.message });
   } finally {
     client.release();

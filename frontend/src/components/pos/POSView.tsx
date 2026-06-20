@@ -227,7 +227,7 @@ export const POSView: React.FC<POSViewProps> = ({
     };
 
     try {
-      const response = await fetch('http://localhost:5000/api/orders', {
+      const response = await fetch('/api/orders', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -241,7 +241,7 @@ export const POSView: React.FC<POSViewProps> = ({
       }
 
       // 2. Submit payment to record transaction and mark order Paid
-      const payResponse = await fetch(`http://localhost:5000/api/orders/${orderData.id}/pay`, {
+      const payResponse = await fetch(`/api/orders/${orderData.id}/pay`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -285,7 +285,7 @@ export const POSView: React.FC<POSViewProps> = ({
   const updateTableStatus = async (tableId: string, newStatus: SeatingTable['status']) => {
     if (!token) return;
     try {
-      await fetch(`http://localhost:5000/api/tables/${tableId}/status`, {
+      await fetch(`/api/tables/${tableId}/status`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
         body: JSON.stringify({ status: newStatus })

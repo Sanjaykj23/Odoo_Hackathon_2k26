@@ -34,9 +34,10 @@ CREATE TABLE orders (
     tax DECIMAL(10, 2) NOT NULL DEFAULT 0.00, [cite: 183]
     discount_amount DECIMAL(10, 2) NOT NULL DEFAULT 0.00, [cite: 184]
     total_amount DECIMAL(10, 2) NOT NULL DEFAULT 0.00, [cite: 185]
-    payment_method VARCHAR(50) NULL CHECK (payment_method IN ('Cash', 'Card', 'UPI')), [cite: 17, 44]
-    status VARCHAR(50) DEFAULT 'Draft' CHECK (status IN ('Draft', 'Paid', 'Cancelled')), [cite: 214]
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP [cite: 211]
+    payment_method VARCHAR(50) NULL CHECK (payment_method IN ('Cash', 'Card', 'UPI')),
+    status VARCHAR(50) DEFAULT 'Draft' CHECK (status IN ('Draft', 'To Pay', 'Paid', 'Cancelled')),
+    order_type VARCHAR(50) DEFAULT 'Dine-In' CHECK (order_type IN ('Dine-In', 'Takeaway', 'Self-Order')),
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 CREATE TABLE kds_tickets (
     id SERIAL PRIMARY KEY,

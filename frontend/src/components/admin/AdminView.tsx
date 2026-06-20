@@ -1,10 +1,12 @@
-import React, { useState, useMemo, useEffect } from 'react';
+import React, { useState, useMemo, useEffect, useRef } from 'react';
 import { 
   TrendingUp, DollarSign, ShoppingBag, Plus, Trash2, 
   X, ToggleLeft, ToggleRight, Coffee, 
-  Utensils, Percent, Calendar, Users, Key, Shield, User, MapPin, Phone
+  Utensils, Percent, Calendar, Users, Key, Shield, User, MapPin, Phone,
+  QrCode, Download, ChevronRight, ChevronLeft, Check, ArrowRight
 } from 'lucide-react';
 import type { Product, Category, SeatingTable, PromoCode, Order } from '../../types';
+import { QRCodeSVG } from 'qrcode.react';
 
 interface AdminViewProps {
   token: string | null;
@@ -36,7 +38,7 @@ export const AdminView: React.FC<AdminViewProps> = ({
   setActiveView
 }) => {
   // Tabs management
-  const [activeTab, setActiveTab] = useState<'products' | 'categories' | 'tables' | 'promos' | 'users' | 'shops'>('products');
+  const [activeTab, setActiveTab] = useState<'products' | 'categories' | 'tables' | 'promos' | 'users' | 'reports' | 'shops'>('products');
 
   // Backend state for Employees & Shops
   const [employees, setEmployees] = useState<any[]>([]);
@@ -75,12 +77,19 @@ export const AdminView: React.FC<AdminViewProps> = ({
   const [userError, setUserError] = useState('');
   const [userSuccess, setUserSuccess] = useState('');
 
-  // FORM STATES: Add Shop Form (SuperAdmin Only)
+  // FORM STATES: Add Shop Form (SuperAdmin Only) — 3-step wizard
+  const [shopWizardStep, setShopWizardStep] = useState<1 | 2 | 3>(1);
   const [newShopName, setNewShopName] = useState('');
   const [newShopAddress, setNewShopAddress] = useState('');
   const [newShopPhone, setNewShopPhone] = useState('');
+  const [shopTableCount, setShopTableCount] = useState<string>('');
+  const [shopTableCapacities, setShopTableCapacities] = useState<number[]>([]);
   const [shopError, setShopError] = useState('');
   const [shopSuccess, setShopSuccess] = useState('');
+  // QR modal state
+  const [qrModalTable, setQrModalTable] = useState<any | null>(null);
+  const [shopTableQrData, setShopTableQrData] = useState<any[]>([]);
+
 
   // Password reset state
   const [passwordResetUserId, setPasswordResetUserId] = useState<number | null>(null);
@@ -102,14 +111,14 @@ export const AdminView: React.FC<AdminViewProps> = ({
 
     try {
       // Fetch employees
-      const empRes = await fetch('http://localhost:5000/api/auth/employees', { headers });
+      const empRes = await fetch('/api/auth/employees', { headers });
       const empData = await empRes.json();
       if (Array.isArray(empData)) {
         setEmployees(empData);
       }
 
       // Fetch shops
-      const shopRes = await fetch('http://localhost:5000/api/shops', { headers });
+      const shopRes = await fetch('/api/shops', { headers });
       const shopData = await shopRes.json();
       if (Array.isArray(shopData)) {
         setShops(shopData);
@@ -142,11 +151,11 @@ export const AdminView: React.FC<AdminViewProps> = ({
       popularity: 4,
       cost_index: 2,
       country: newProdCountry || 'India',
-      shop_id: user.shop_id || 1
+      shop_id: user.shop_id || (shops.length > 0 ? shops[0].id : 1)
     };
 
     try {
-      const response = await fetch('http://localhost:5000/api/products', {
+      const response = await fetch('/api/products', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -173,7 +182,7 @@ export const AdminView: React.FC<AdminViewProps> = ({
     if (!confirmDelete) return;
 
     try {
-      const response = await fetch(`http://localhost:5000/api/products/${id}`, {
+      const response = await fetch(`/api/products/${id}`, {
         method: 'DELETE',
         headers: { 'Authorization': `Bearer ${token}` }
       });
@@ -192,7 +201,7 @@ export const AdminView: React.FC<AdminViewProps> = ({
     if (!product) return;
 
     try {
-      const response = await fetch(`http://localhost:5000/api/products/${id}/availability`, {
+      const response = await fetch(`/api/products/${id}/availability`, {
         method: 'PUT',
         headers: {
           'Content-Type': 'application/json',
@@ -220,11 +229,11 @@ export const AdminView: React.FC<AdminViewProps> = ({
       code: newPromoCode.trim().toUpperCase(),
       discountType: newPromoType,
       value: valNum,
-      shop_id: user.shop_id || 1
+      shop_id: user.shop_id || (shops.length > 0 ? shops[0].id : 1)
     };
 
     try {
-      const response = await fetch('http://localhost:5000/api/promos', {
+      const response = await fetch('/api/promos', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -250,7 +259,7 @@ export const AdminView: React.FC<AdminViewProps> = ({
     if (!promo) return;
 
     try {
-      const response = await fetch(`http://localhost:5000/api/promos/${code}`, {
+      const response = await fetch(`/api/promos/${code}`, {
         method: 'PUT',
         headers: {
           'Content-Type': 'application/json',
@@ -273,7 +282,7 @@ export const AdminView: React.FC<AdminViewProps> = ({
     if (!confirmDelete) return;
 
     try {
-      const response = await fetch(`http://localhost:5000/api/promos/${code}`, {
+      const response = await fetch(`/api/promos/${code}`, {
         method: 'DELETE',
         headers: { 'Authorization': `Bearer ${token}` }
       });
@@ -291,7 +300,7 @@ export const AdminView: React.FC<AdminViewProps> = ({
     if (!token) return;
 
     try {
-      const response = await fetch(`http://localhost:5000/api/tables/${id}/status`, {
+      const response = await fetch(`/api/tables/${id}/status`, {
         method: 'PUT',
         headers: {
           'Content-Type': 'application/json',
@@ -308,12 +317,36 @@ export const AdminView: React.FC<AdminViewProps> = ({
     }
   };
 
+  const updateTableCapacity = async (id: string, capacity: number) => {
+    if (!token) return;
+
+    try {
+      const response = await fetch(`/api/tables/${id}/capacity`, {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`
+        },
+        body: JSON.stringify({ capacity })
+      });
+      if (response.ok) {
+        // Optimistically update tables in parent state
+        onUpdateTables(tables.map(t => t.id === id ? { ...t, capacity } : t));
+      } else {
+        const errData = await response.json();
+        alert(errData.error || 'Failed to update table capacity.');
+      }
+    } catch (err) {
+      console.error('Error updating table capacity:', err);
+    }
+  };
+
   // Handlers for Categories
   const handleSaveCategoryColor = async (id: string) => {
     if (!token) return;
 
     try {
-      const response = await fetch(`http://localhost:5000/api/categories/${id}`, {
+      const response = await fetch(`/api/categories/${id}`, {
         method: 'PUT',
         headers: {
           'Content-Type': 'application/json',
@@ -332,46 +365,87 @@ export const AdminView: React.FC<AdminViewProps> = ({
     }
   };
 
-  // Shop Creation Handler (SuperAdmin Only)
+  // Wizard Step 1 → 2: validate shop details and compute table count
+  const handleWizardStep1 = (e: React.FormEvent) => {
+    e.preventDefault();
+    setShopError('');
+    if (!newShopName.trim()) { setShopError('Shop name is required.'); return; }
+    const count = parseInt(shopTableCount);
+    if (isNaN(count) || count < 1 || count > 50) { setShopError('Enter a valid number of tables (1–50).'); return; }
+    setShopTableCapacities(Array(count).fill(2));
+    setShopWizardStep(2);
+  };
+
+  // Wizard Step 2 → 3: submit to API
   const handleCreateShop = async (e: React.FormEvent) => {
     e.preventDefault();
     setShopError('');
     setShopSuccess('');
-
-    if (!newShopName) {
-      setShopError('Shop name is required.');
+    if (shopTableCapacities.some(c => c < 1)) {
+      setShopError('All tables must have at least 1 seat.');
       return;
     }
-
     try {
-      const response = await fetch('http://localhost:5000/api/shops', {
+      const response = await fetch('/api/shops', {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${token}`
-        },
+        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
         body: JSON.stringify({
-          name: newShopName,
-          address: newShopAddress,
-          phone: newShopPhone
+          name: newShopName, address: newShopAddress, phone: newShopPhone,
+          table_capacities: shopTableCapacities
         })
       });
-
       const data = await response.json();
-      if (!response.ok) {
-        throw new Error(data.error || 'Failed to create shop.');
-      }
+      if (!response.ok) throw new Error(data.error || 'Failed to create shop.');
 
-      setShopSuccess(`Shop "${data.name}" registered successfully in database!`);
-      setNewShopName('');
-      setNewShopAddress('');
-      setNewShopPhone('');
+      // Fetch the newly created shop's tables to get QR tokens
+      const tablesRes = await fetch(`/api/tables?shopId=${data.id}`, {
+        headers: { 'Authorization': `Bearer ${token}` }
+      });
+      const tablesData = await tablesRes.json();
+      setShopTableQrData(Array.isArray(tablesData) ? tablesData : []);
 
-      // Reload Shops
+      setShopSuccess(`Shop "${data.name}" created with ${shopTableCapacities.length} tables!`);
+      setShopWizardStep(3);
       await fetchUsersAndShops();
     } catch (err: any) {
       setShopError(err.message || 'Error occurred.');
     }
+  };
+
+  // Reset wizard
+  const resetShopWizard = () => {
+    setShopWizardStep(1);
+    setNewShopName(''); setNewShopAddress(''); setNewShopPhone('');
+    setShopTableCount(''); setShopTableCapacities([]);
+    setShopError(''); setShopSuccess(''); setShopTableQrData([]);
+  };
+
+  // Download QR code as PNG
+  const downloadQR = (tableId: string, tableNum: number) => {
+    const svg = document.getElementById(`qr-svg-${tableId}`);
+    if (!svg) return;
+    const svgData = new XMLSerializer().serializeToString(svg);
+    const canvas = document.createElement('canvas');
+    canvas.width = 300; canvas.height = 340;
+    const ctx = canvas.getContext('2d')!;
+    const img = new Image();
+    img.onload = () => {
+      ctx.fillStyle = '#ffffff';
+      ctx.fillRect(0, 0, 300, 340);
+      ctx.drawImage(img, 25, 20, 250, 250);
+      ctx.fillStyle = '#1e293b';
+      ctx.font = 'bold 18px sans-serif';
+      ctx.textAlign = 'center';
+      ctx.fillText(`Table #${tableNum}`, 150, 300);
+      ctx.font = '13px sans-serif';
+      ctx.fillStyle = '#64748b';
+      ctx.fillText('Scan to order', 150, 325);
+      const link = document.createElement('a');
+      link.download = `table-${tableNum}-qr.png`;
+      link.href = canvas.toDataURL();
+      link.click();
+    };
+    img.src = 'data:image/svg+xml;base64,' + btoa(unescape(encodeURIComponent(svgData)));
   };
 
   // User Accounts Handlers
@@ -403,8 +477,8 @@ export const AdminView: React.FC<AdminViewProps> = ({
     };
 
     const endpoint = roleToSend === 'Admin' 
-      ? 'http://localhost:5000/api/auth/create-admin'
-      : 'http://localhost:5000/api/auth/create-employee';
+      ? '/api/auth/create-admin'
+      : '/api/auth/create-employee';
 
     try {
       const response = await fetch(endpoint, {
@@ -430,7 +504,7 @@ export const AdminView: React.FC<AdminViewProps> = ({
       
       // Update employee list
       const headers = { 'Authorization': `Bearer ${token}` };
-      const empRes = await fetch('http://localhost:5000/api/auth/employees', { headers });
+      const empRes = await fetch('/api/auth/employees', { headers });
       const empData = await empRes.json();
       if (Array.isArray(empData)) setEmployees(empData);
     } catch (err: any) {
@@ -440,7 +514,7 @@ export const AdminView: React.FC<AdminViewProps> = ({
 
   const handleToggleArchiveUser = async (empId: number) => {
     try {
-      const response = await fetch(`http://localhost:5000/api/auth/employees/${empId}/archive`, {
+      const response = await fetch(`/api/auth/employees/${empId}/archive`, {
         method: 'PUT',
         headers: { 'Authorization': `Bearer ${token}` }
       });
@@ -463,7 +537,7 @@ export const AdminView: React.FC<AdminViewProps> = ({
     if (!confirmDelete) return;
 
     try {
-      const response = await fetch(`http://localhost:5000/api/auth/employees/${empId}`, {
+      const response = await fetch(`/api/auth/employees/${empId}`, {
         method: 'DELETE',
         headers: { 'Authorization': `Bearer ${token}` }
       });
@@ -484,7 +558,7 @@ export const AdminView: React.FC<AdminViewProps> = ({
     if (!passwordResetUserId || !newResetPassword) return;
 
     try {
-      const response = await fetch(`http://localhost:5000/api/auth/employees/${passwordResetUserId}/password`, {
+      const response = await fetch(`/api/auth/employees/${passwordResetUserId}/password`, {
         method: 'PUT',
         headers: {
           'Content-Type': 'application/json',
@@ -824,48 +898,131 @@ export const AdminView: React.FC<AdminViewProps> = ({
 
         {/* TABLES ARRANGEMENT SHEET */}
         {activeTab === 'tables' && (
-          <div className="p-5">
-            <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-4">
+          <div className="p-5 space-y-4">
+            {/* QR Modal */}
+            {qrModalTable && (
+              <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm" onClick={() => setQrModalTable(null)}>
+                <div className="bg-white rounded-2xl p-8 shadow-2xl flex flex-col items-center gap-4 max-w-xs w-full mx-4" onClick={e => e.stopPropagation()}>
+                  <div className="text-center">
+                    <p className="text-xs font-bold text-slate-400 uppercase tracking-wider">Table #{qrModalTable.number}</p>
+                    <p className="text-lg font-extrabold text-slate-800">{qrModalTable.floor_name || 'Main Floor'}</p>
+                    <p className="text-xs text-slate-400">Scan to place your order</p>
+                  </div>
+                  <div className="p-3 bg-white border-4 border-purple-600 rounded-2xl shadow-sm">
+                    <QRCodeSVG
+                      id={`qr-svg-modal-${qrModalTable.id}`}
+                      value={`/?customer=true&tableId=${qrModalTable.id}&token=${(qrModalTable as any).qr_token || qrModalTable.id}`}
+                      size={200}
+                      bgColor="#ffffff"
+                      fgColor="#1e293b"
+                      level="H"
+                      includeMargin={false}
+                    />
+                  </div>
+                  <div className="flex gap-2 w-full">
+                    <button
+                      onClick={() => downloadQR(`modal-${qrModalTable.id}`, qrModalTable.number)}
+                      className="flex-1 flex items-center justify-center gap-1.5 py-2 bg-purple-600 hover:bg-purple-700 text-white text-xs font-bold rounded-xl transition-all cursor-pointer"
+                    >
+                      <Download className="w-3.5 h-3.5" /> Download PNG
+                    </button>
+                    <button
+                      onClick={() => setQrModalTable(null)}
+                      className="px-4 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-bold rounded-xl transition-all cursor-pointer"
+                    >
+                      Close
+                    </button>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-4">
               {tables.map(table => {
-                const getStatusColor = (status: SeatingTable['status']) => {
-                  switch (status) {
-                    case 'Occupied': return 'border-red-200 bg-red-50 text-red-700';
-                    case 'Reserved': return 'border-amber-200 bg-amber-50 text-amber-700';
-                    case 'Maintenance': return 'border-slate-300 bg-slate-100 text-slate-500';
-                    default: return 'border-green-200 bg-green-50 text-green-700';
-                  }
+                const statusColors: Record<string, string> = {
+                  'Occupied': 'border-red-200 bg-red-50 text-red-700',
+                  'Reserved': 'border-amber-200 bg-amber-50 text-amber-700',
+                  'Maintenance': 'border-slate-300 bg-slate-100 text-slate-500',
+                  'Available': 'border-green-200 bg-green-50 text-green-700'
                 };
+                const qrValue = `/?customer=true&tableId=${table.id}&token=${(table as any).qr_token || table.id}`;
                 return (
-                  <div 
+                  <div
                     key={table.id}
-                    className={`border rounded-xl p-4 flex flex-col justify-between h-36 transition-all bg-white hover:shadow-sm ${
-                      table.status === 'Occupied' ? 'border-red-100 hover:border-red-200' :
-                      table.status === 'Reserved' ? 'border-amber-100 hover:border-amber-200' :
-                      'border-slate-200 hover:border-slate-300'
-                    }`}
+                    className="border border-slate-200 rounded-2xl p-3 flex flex-col gap-2 bg-white hover:shadow-md transition-all"
                   >
-                    <div>
-                      <div className="flex justify-between items-center">
-                        <span className="text-sm font-extrabold text-slate-800">Table #{table.number}</span>
-                        <span className="text-[10px] text-slate-400 font-semibold">Cap: {table.capacity}</span>
+                    {/* Table header */}
+                    <div className="flex justify-between items-start">
+                      <div>
+                        <span className="text-sm font-extrabold text-slate-800">T-{table.number}</span>
+                        <p className="text-[9px] text-slate-400">{table.capacity} seats</p>
                       </div>
-                      <span className={`inline-block text-[10px] font-bold px-2 py-0.5 rounded-full mt-2 border ${getStatusColor(table.status)}`}>
+                      <span className={`text-[9px] font-bold px-1.5 py-0.5 rounded-full border ${statusColors[table.status] || statusColors['Available']}`}>
                         {table.status}
                       </span>
                     </div>
 
-                    <div className="space-y-1 mt-3 pt-2 border-t border-slate-100">
-                      <label className="block text-[8px] text-slate-400 font-bold uppercase">Update Seating</label>
-                      <select
-                        value={table.status}
-                        onChange={(e) => updateTableStatus(table.id, e.target.value as any)}
-                        className="w-full text-[10px] bg-slate-50 border border-slate-200 rounded p-1 focus:outline-none font-semibold text-slate-700"
+                    {/* Mini QR preview — clickable to open modal */}
+                    <button
+                      onClick={() => setQrModalTable(table)}
+                      className="w-full flex flex-col items-center gap-1 py-2 bg-slate-50 rounded-xl border border-slate-100 hover:bg-purple-50 hover:border-purple-200 transition-all cursor-pointer group"
+                    >
+                      <QRCodeSVG
+                        id={`qr-svg-${table.id}`}
+                        value={qrValue}
+                        size={72}
+                        bgColor="#f8fafc"
+                        fgColor="#1e293b"
+                        level="M"
+                        includeMargin={false}
+                      />
+                      <span className="text-[8px] font-bold text-slate-400 group-hover:text-purple-600 flex items-center gap-0.5">
+                        <QrCode className="w-2.5 h-2.5" /> View QR
+                      </span>
+                    </button>
+
+                    {/* Controls */}
+                    <div className="grid grid-cols-2 gap-1.5 pt-1 border-t border-slate-100">
+                      <div>
+                        <label className="block text-[7px] text-slate-400 font-bold uppercase mb-0.5">Seats</label>
+                        <input
+                          type="number"
+                          min="1"
+                          value={table.capacity}
+                          onChange={(e) => updateTableCapacity(table.id, parseInt(e.target.value) || 1)}
+                          className="w-full text-[10px] bg-slate-50 border border-slate-200 rounded-lg p-1 focus:outline-none focus:ring-1 focus:ring-purple-400 font-semibold text-slate-700"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-[7px] text-slate-400 font-bold uppercase mb-0.5">Status</label>
+                        <select
+                          value={table.status}
+                          onChange={(e) => updateTableStatus(table.id, e.target.value as SeatingTable['status'])}
+                          className="w-full text-[10px] bg-slate-50 border border-slate-200 rounded-lg p-1 focus:outline-none focus:ring-1 focus:ring-purple-400 font-semibold text-slate-700"
+                        >
+                          <option value="Available">Available</option>
+                          <option value="Occupied">Occupied</option>
+                          <option value="Reserved">Reserved</option>
+                          <option value="Maintenance">Maintenance</option>
+                        </select>
+                      </div>
+                    </div>
+
+                    <div className="flex gap-1 mt-1">
+                      {table.status !== 'Available' && (
+                        <button
+                          onClick={() => updateTableStatus(table.id, 'Available')}
+                          className="flex-1 text-[9px] font-bold text-red-600 hover:bg-red-50 py-1 rounded-lg border border-red-100 transition-all flex items-center justify-center cursor-pointer"
+                        >
+                          End Session
+                        </button>
+                      )}
+                      <button
+                        onClick={() => downloadQR(table.id, table.number)}
+                        className="flex-1 text-[9px] font-bold text-slate-500 hover:text-purple-600 hover:bg-purple-50 py-1 rounded-lg border border-transparent hover:border-purple-200 transition-all flex items-center justify-center gap-1 cursor-pointer"
                       >
-                        <option value="Available">Available</option>
-                        <option value="Occupied">Occupied</option>
-                        <option value="Reserved">Reserved</option>
-                        <option value="Maintenance">Maintenance</option>
-                      </select>
+                        <Download className="w-2.5 h-2.5" /> QR
+                      </button>
                     </div>
                   </div>
                 );
@@ -1216,71 +1373,180 @@ export const AdminView: React.FC<AdminViewProps> = ({
         {/* SHOPS MANAGEMENT SHEET (SuperAdmin Only) */}
         {activeTab === 'shops' && user?.role === 'SuperAdmin' && (
           <div className="divide-y divide-[#e2e8f0]">
-            
-            {/* Create Shop Form */}
-            <div className="p-6 bg-slate-50/50">
-              <h3 className="text-sm font-bold text-slate-800 flex items-center gap-2 mb-4">
-                <MapPin className="w-4 h-4 text-purple-600" />
-                Register New Branch / Shop
-              </h3>
+
+            {/* ── 3-STEP WIZARD ── */}
+            <div className="p-6">
+              <div className="flex items-center justify-between mb-6">
+                <h3 className="text-sm font-bold text-slate-800 flex items-center gap-2">
+                  <MapPin className="w-4 h-4 text-purple-600" />
+                  Register New Branch / Shop
+                </h3>
+                {/* Step indicator */}
+                <div className="flex items-center gap-2">
+                  {[1,2,3].map(s => (
+                    <div key={s} className={`flex items-center gap-1.5 ${ s < shopWizardStep ? 'text-green-600' : s === shopWizardStep ? 'text-purple-700' : 'text-slate-300' }`}>
+                      <span className={`w-6 h-6 rounded-full flex items-center justify-center text-[10px] font-extrabold border-2 ${
+                        s < shopWizardStep ? 'bg-green-50 border-green-400' :
+                        s === shopWizardStep ? 'bg-purple-600 border-purple-600 text-white' :
+                        'border-slate-200'
+                      }`}>
+                        {s < shopWizardStep ? <Check className="w-3 h-3" /> : s}
+                      </span>
+                      {s < 3 && <ArrowRight className="w-3 h-3 text-slate-300" />}
+                    </div>
+                  ))}
+                </div>
+              </div>
 
               {shopError && (
                 <div className="mb-4 bg-red-50 border border-red-200 text-red-600 p-3 rounded-xl text-xs font-semibold">
                   {shopError}
                 </div>
               )}
-              {shopSuccess && (
-                <div className="mb-4 bg-green-50 border border-green-200 text-green-700 p-3 rounded-xl text-xs font-semibold">
-                  {shopSuccess}
-                </div>
+
+              {/* ── STEP 1: Shop Details + Table Count ── */}
+              {shopWizardStep === 1 && (
+                <form onSubmit={handleWizardStep1} className="space-y-5">
+                  <p className="text-xs text-slate-500 font-medium">Step 1 of 2 — Enter shop details and how many tables this shop has.</p>
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <div>
+                      <label className="block text-[10px] uppercase tracking-wider font-bold text-slate-500 mb-1">Shop / Branch Name *</label>
+                      <input type="text" required placeholder="e.g. Odoo Cafe Downtown"
+                        value={newShopName} onChange={e => setNewShopName(e.target.value)}
+                        className="w-full text-xs px-3 py-2.5 bg-white border border-[#e2e8f0] rounded-xl focus:outline-none focus:ring-2 focus:ring-purple-500 text-slate-800"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-[10px] uppercase tracking-wider font-bold text-slate-500 mb-1">Phone Number</label>
+                      <input type="text" placeholder="e.g. +91 98765 43210"
+                        value={newShopPhone} onChange={e => setNewShopPhone(e.target.value)}
+                        className="w-full text-xs px-3 py-2.5 bg-white border border-[#e2e8f0] rounded-xl focus:outline-none focus:ring-2 focus:ring-purple-500 text-slate-800"
+                      />
+                    </div>
+                    <div className="md:col-span-2">
+                      <label className="block text-[10px] uppercase tracking-wider font-bold text-slate-500 mb-1">Address</label>
+                      <input type="text" placeholder="e.g. 12 MG Road, Bengaluru"
+                        value={newShopAddress} onChange={e => setNewShopAddress(e.target.value)}
+                        className="w-full text-xs px-3 py-2.5 bg-white border border-[#e2e8f0] rounded-xl focus:outline-none focus:ring-2 focus:ring-purple-500 text-slate-800"
+                      />
+                    </div>
+                    <div className="md:col-span-2">
+                      <label className="block text-[10px] uppercase tracking-wider font-bold text-slate-500 mb-1">Number of Tables in this Shop *</label>
+                      <input type="number" required min="1" max="50" placeholder="e.g. 10"
+                        value={shopTableCount} onChange={e => setShopTableCount(e.target.value)}
+                        className="w-full md:w-48 text-xs px-3 py-2.5 bg-white border border-[#e2e8f0] rounded-xl focus:outline-none focus:ring-2 focus:ring-purple-500 text-slate-800"
+                      />
+                      <p className="text-[10px] text-slate-400 mt-1">You'll set the seat capacity for each table in the next step.</p>
+                    </div>
+                  </div>
+                  <div className="flex justify-end">
+                    <button type="submit"
+                      className="px-6 py-2.5 bg-purple-600 hover:bg-purple-700 text-white font-bold text-xs rounded-xl transition-all flex items-center gap-1.5 cursor-pointer"
+                    >
+                      Next: Set Seat Capacities <ChevronRight className="w-4 h-4" />
+                    </button>
+                  </div>
+                </form>
               )}
 
-              <form onSubmit={handleCreateShop} className="grid grid-cols-1 md:grid-cols-4 gap-4 items-end">
-                <div>
-                  <label className="block text-[10px] uppercase tracking-wider font-bold text-slate-500 mb-1">Shop/Branch Name</label>
-                  <input
-                    type="text"
-                    required
-                    placeholder="e.g. Odoo Cafe Downtown"
-                    value={newShopName}
-                    onChange={(e) => setNewShopName(e.target.value)}
-                    className="w-full text-xs px-3 py-2 bg-white border border-[#e2e8f0] rounded-xl focus:outline-none focus:ring-1 focus:ring-purple-500 focus:border-purple-500 text-slate-800"
-                  />
-                </div>
-                <div>
-                  <label className="block text-[10px] uppercase tracking-wider font-bold text-slate-500 mb-1">Shop Address</label>
-                  <input
-                    type="text"
-                    placeholder="e.g. 456 Broadway Ave"
-                    value={newShopAddress}
-                    onChange={(e) => setNewShopAddress(e.target.value)}
-                    className="w-full text-xs px-3 py-2 bg-white border border-[#e2e8f0] rounded-xl focus:outline-none focus:ring-1 focus:ring-purple-500 focus:border-purple-500 text-slate-800"
-                  />
-                </div>
-                <div>
-                  <label className="block text-[10px] uppercase tracking-wider font-bold text-slate-500 mb-1">Phone Number</label>
-                  <input
-                    type="text"
-                    placeholder="e.g. +1 (555) 012-3456"
-                    value={newShopPhone}
-                    onChange={(e) => setNewShopPhone(e.target.value)}
-                    className="w-full text-xs px-3 py-2 bg-white border border-[#e2e8f0] rounded-xl focus:outline-none focus:ring-1 focus:ring-purple-500 focus:border-purple-500 text-slate-800"
-                  />
-                </div>
+              {/* ── STEP 2: Per-Table Seat Capacity ── */}
+              {shopWizardStep === 2 && (
+                <form onSubmit={handleCreateShop} className="space-y-5">
+                  <p className="text-xs text-slate-500 font-medium">Step 2 of 2 — Set how many people can sit at each table.</p>
+                  <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-3">
+                    {shopTableCapacities.map((cap, idx) => (
+                      <div key={idx} className="bg-slate-50 border border-slate-200 rounded-xl p-3 flex flex-col items-center gap-2">
+                        <div className="w-8 h-8 rounded-full bg-purple-100 border-2 border-purple-300 flex items-center justify-center">
+                          <span className="text-xs font-extrabold text-purple-700">{idx + 1}</span>
+                        </div>
+                        <label className="text-[9px] font-bold text-slate-400 uppercase">Table {idx + 1}</label>
+                        <input
+                          type="number" min="1" max="20" required
+                          value={cap}
+                          onChange={e => {
+                            const updated = [...shopTableCapacities];
+                            updated[idx] = parseInt(e.target.value) || 1;
+                            setShopTableCapacities(updated);
+                          }}
+                          className="w-full text-center text-sm font-bold px-2 py-1.5 bg-white border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-purple-400 text-slate-800"
+                        />
+                        <span className="text-[9px] text-slate-400">seats</span>
+                      </div>
+                    ))}
+                  </div>
+                  <div className="flex justify-between">
+                    <button type="button" onClick={() => setShopWizardStep(1)}
+                      className="px-5 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold text-xs rounded-xl transition-all flex items-center gap-1.5 cursor-pointer"
+                    >
+                      <ChevronLeft className="w-4 h-4" /> Back
+                    </button>
+                    <button type="submit"
+                      className="px-6 py-2.5 bg-purple-600 hover:bg-purple-700 text-white font-bold text-xs rounded-xl transition-all flex items-center gap-1.5 cursor-pointer"
+                    >
+                      <Plus className="w-3.5 h-3.5" /> Create Shop & Generate QR Codes
+                    </button>
+                  </div>
+                </form>
+              )}
 
-                <div className="flex justify-end">
-                  <button
-                    type="submit"
-                    className="w-full px-5 py-2.5 bg-purple-600 hover:bg-purple-700 text-white font-bold text-xs rounded-xl transition-all shadow-sm flex items-center justify-center gap-1.5 cursor-pointer"
+              {/* ── STEP 3: Success — Show QR Codes ── */}
+              {shopWizardStep === 3 && (
+                <div className="space-y-5">
+                  <div className="flex items-center gap-3 p-4 bg-green-50 border border-green-200 rounded-xl">
+                    <div className="w-8 h-8 rounded-full bg-green-500 flex items-center justify-center flex-shrink-0">
+                      <Check className="w-4 h-4 text-white" />
+                    </div>
+                    <div>
+                      <p className="text-sm font-bold text-green-800">{shopSuccess}</p>
+                      <p className="text-xs text-green-600">QR codes generated for all tables. Download and print them.</p>
+                    </div>
+                  </div>
+
+                  {shopTableQrData.length > 0 && (
+                    <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-4">
+                      {shopTableQrData.map((t: any) => {
+                        const qrVal = `/?customer=true&tableId=${t.id}&token=${t.qr_token || t.id}`;
+                        return (
+                          <div key={t.id} className="flex flex-col items-center gap-2 border border-slate-200 rounded-xl p-3 bg-white">
+                            <p className="text-xs font-extrabold text-slate-700">Table #{t.table_number}</p>
+                            <p className="text-[9px] text-slate-400">{t.seats} seats</p>
+                            <div className="p-2 bg-white border border-slate-100 rounded-lg">
+                              <QRCodeSVG
+                                id={`qr-svg-new-${t.id}`}
+                                value={qrVal}
+                                size={100}
+                                bgColor="#ffffff"
+                                fgColor="#1e293b"
+                                level="H"
+                                includeMargin={false}
+                              />
+                            </div>
+                            <button
+                              onClick={() => downloadQR(`new-${t.id}`, t.table_number)}
+                              className="w-full text-[9px] font-bold text-purple-600 hover:bg-purple-50 py-1 rounded-lg border border-purple-200 hover:border-purple-400 transition-all flex items-center justify-center gap-1 cursor-pointer"
+                            >
+                              <Download className="w-2.5 h-2.5" /> Download
+                            </button>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+
+                  <button onClick={resetShopWizard}
+                    className="px-5 py-2 bg-purple-600 hover:bg-purple-700 text-white font-bold text-xs rounded-xl transition-all flex items-center gap-1.5 cursor-pointer"
                   >
-                    <Plus className="w-3.5 h-3.5" /> Register Shop
+                    <Plus className="w-3.5 h-3.5" /> Register Another Shop
                   </button>
                 </div>
-              </form>
+              )}
             </div>
 
             {/* Shops Directory */}
             <div className="overflow-x-auto">
+              <div className="p-4 bg-slate-50 border-b border-slate-200">
+                <span className="text-xs font-bold text-slate-700">Registered Branches</span>
+              </div>
               <table className="w-full text-left border-collapse text-xs">
                 <thead>
                   <tr className="bg-slate-50 border-b border-[#e2e8f0] text-slate-400 font-bold uppercase tracking-wider">
@@ -1295,14 +1561,18 @@ export const AdminView: React.FC<AdminViewProps> = ({
                   {shops.map(sh => (
                     <tr key={sh.id} className="hover:bg-slate-50/50">
                       <td className="p-4 font-mono font-bold text-slate-500">#{sh.id}</td>
-                      <td className="p-4 font-bold text-slate-800 flex items-center gap-2">
-                        <MapPin className="w-3.5 h-3.5 text-purple-600" />
-                        {sh.name}
+                      <td className="p-4 font-bold text-slate-800">
+                        <div className="flex items-center gap-2">
+                          <MapPin className="w-3.5 h-3.5 text-purple-600" />
+                          {sh.name}
+                        </div>
                       </td>
                       <td className="p-4 text-slate-600">{sh.address || 'N/A'}</td>
-                      <td className="p-4 font-medium text-slate-700 flex items-center gap-1 mt-3.5 border-t border-transparent">
-                        <Phone className="w-3 h-3 text-slate-400" />
-                        {sh.phone || 'N/A'}
+                      <td className="p-4 font-medium text-slate-700">
+                        <div className="flex items-center gap-1">
+                          <Phone className="w-3 h-3 text-slate-400" />
+                          {sh.phone || 'N/A'}
+                        </div>
                       </td>
                       <td className="p-4 text-slate-400">
                         {new Date(sh.created_at || sh.created_date || Date.now()).toLocaleDateString()}

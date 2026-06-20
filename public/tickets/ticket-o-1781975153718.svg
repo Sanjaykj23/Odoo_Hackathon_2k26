@@ -1,0 +1,89 @@
+
+    <svg width="300" height="370" viewBox="0 0 300 370" xmlns="http://www.w3.org/2000/svg">
+      <!-- Background Card -->
+      <rect width="300" height="370" rx="16" fill="#ffffff" stroke="#e2e8f0" stroke-width="2"/>
+      
+      <!-- Metro Ticket Header (Purple Theme) -->
+      <path d="M 0 16 A 16 16 0 0 1 16 0 L 284 0 A 16 16 0 0 1 300 16 L 300 90 L 0 90 Z" fill="#714B67"/>
+      
+      <!-- Ticket Details -->
+      <text x="150" y="35" font-family="Arial, sans-serif" font-size="16" font-weight="black" fill="#ffffff" text-anchor="middle">ODOO CAFE METRO-TICKET</text>
+      <text x="150" y="55" font-family="Arial, sans-serif" font-size="11" fill="#f5f3f4" text-anchor="middle">Odoo Cafe HQ</text>
+      <text x="150" y="72" font-family="Arial, sans-serif" font-size="10" fill="#e5e5e5" text-anchor="middle">123 Tech Park, Suite 100</text>
+      
+      <!-- Ticket Details Grid -->
+      <text x="25" y="120" font-family="Arial, sans-serif" font-size="10" font-weight="bold" fill="#94a3b8">ORDER NO</text>
+      <text x="25" y="138" font-family="Arial, sans-serif" font-size="13" font-weight="black" fill="#1e293b">T-670</text>
+      
+      <text x="150" y="120" font-family="Arial, sans-serif" font-size="10" font-weight="bold" fill="#94a3b8" text-anchor="middle">TABLE NO</text>
+      <text x="150" y="138" font-family="Arial, sans-serif" font-size="14" font-weight="black" fill="#714B67" text-anchor="middle">#4</text>
+      
+      <text x="275" y="120" font-family="Arial, sans-serif" font-size="10" font-weight="bold" fill="#94a3b8" text-anchor="end">DATE</text>
+      <text x="275" y="138" font-family="Arial, sans-serif" font-size="11" fill="#475569" text-anchor="end">20/6/2026</text>
+      
+      <!-- Divider -->
+      <line x1="20" y1="155" x2="280" y2="155" stroke="#e2e8f0" stroke-width="1.5" stroke-dasharray="4 4"/>
+      
+      <!-- Items Section -->
+      
+      <text x="25" y="180" font-family="Arial, sans-serif" font-size="12" fill="#334155">Crispy Pani Puri</text>
+      <text x="170" y="180" font-family="Arial, sans-serif" font-size="12" fill="#334155" text-anchor="middle">x1</text>
+      <text x="275" y="180" font-family="Arial, sans-serif" font-size="12" font-weight="bold" fill="#1e293b" text-anchor="end">₹6.50</text>
+    
+      <text x="25" y="205" font-family="Arial, sans-serif" font-size="12" fill="#334155">Royal Rasmalai (2 Pcs)</text>
+      <text x="170" y="205" font-family="Arial, sans-serif" font-size="12" fill="#334155" text-anchor="middle">x1</text>
+      <text x="275" y="205" font-family="Arial, sans-serif" font-size="12" font-weight="bold" fill="#1e293b" text-anchor="end">₹5.99</text>
+    
+      
+      <!-- Divider -->
+      <line x1="20" y1="275" x2="280" y2="275" stroke="#e2e8f0" stroke-width="1.5" stroke-dasharray="4 4"/>
+      
+      <!-- Total Price Bar -->
+      <rect x="20" y="290" width="260" height="40" rx="8" fill="#f8fafc"/>
+      <text x="35" y="314" font-family="Arial, sans-serif" font-size="12" font-weight="bold" fill="#64748b">AMOUNT PAID</text>
+      <text x="265" y="315" font-family="Arial, sans-serif" font-size="16" font-weight="black" fill="#714B67" text-anchor="end">₹10.49</text>
+      
+      <!-- Mock Metro-ticket Barcode lines -->
+      <g fill="#1e293b">
+        <rect x="50" y="330" width="3" height="30"/>
+        <rect x="56" y="330" width="1" height="30"/>
+        <rect x="60" y="330" width="4" height="30"/>
+        <rect x="67" y="330" width="2" height="30"/>
+        <rect x="72" y="330" width="1" height="30"/>
+        <rect x="76" y="330" width="3" height="30"/>
+        <rect x="82" y="330" width="1.5" height="30"/>
+        <rect x="86" y="330" width="4" height="30"/>
+        <rect x="93" y="330" width="2" height="30"/>
+        <rect x="98" y="330" width="1" height="30"/>
+        
+        <rect x="110" y="330" width="2" height="30"/>
+        <rect x="115" y="330" width="3" height="30"/>
+        <rect x="121" y="330" width="1" height="30"/>
+        <rect x="125" y="330" width="4" height="30"/>
+        <rect x="132" y="330" width="2" height="30"/>
+        <rect x="137" y="330" width="1" height="30"/>
+        <rect x="141" y="330" width="3" height="30"/>
+        
+        <rect x="155" y="330" width="3" height="30"/>
+        <rect x="161" y="330" width="1" height="30"/>
+        <rect x="165" y="330" width="4" height="30"/>
+        <rect x="172" y="330" width="2" height="30"/>
+        <rect x="177" y="330" width="1" height="30"/>
+        
+        <rect x="190" y="330" width="1.5" height="30"/>
+        <rect x="194" y="330" width="4" height="30"/>
+        <rect x="201" y="330" width="2" height="30"/>
+        <rect x="206" y="330" width="1" height="30"/>
+        <rect x="210" y="330" width="3" height="30"/>
+        <rect x="216" y="330" width="1" height="30"/>
+        <rect x="220" y="330" width="4" height="30"/>
+        
+        <rect x="232" y="330" width="2" height="30"/>
+        <rect x="237" y="330" width="3" height="30"/>
+        <rect x="243" y="330" width="1" height="30"/>
+        <rect x="247" y="330" width="4" height="30"/>
+      </g>
+      
+      <text x="150" y="372" font-family="Arial, sans-serif" font-size="9" fill="#94a3b8" text-anchor="middle">SCAN FOR ENTRY / EXIT VALIDATION</text>
+    </svg>
+  

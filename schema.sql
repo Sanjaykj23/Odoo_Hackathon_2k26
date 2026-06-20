@@ -151,8 +151,9 @@ CREATE TABLE orders (
     discount_amount DECIMAL(10, 2) NOT NULL DEFAULT 0.00,
     total_amount DECIMAL(10, 2) NOT NULL DEFAULT 0.00,
     payment_method VARCHAR(50),
-    status VARCHAR(50) DEFAULT 'Draft' CHECK (status IN ('Draft', 'Paid', 'Cancelled')),
+    status VARCHAR(50) DEFAULT 'Draft' CHECK (status IN ('Draft', 'To Pay', 'Paid', 'Cancelled')),
     kds_status VARCHAR(50) DEFAULT 'To Cook' CHECK (kds_status IN ('To Cook', 'Preparing', 'Completed')),
+    order_type VARCHAR(50) DEFAULT 'Dine-In' CHECK (order_type IN ('Dine-In', 'Takeaway', 'Self-Order')),
     notes TEXT,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
