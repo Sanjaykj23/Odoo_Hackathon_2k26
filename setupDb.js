@@ -174,7 +174,7 @@ async function setup() {
         name: 'Gulab Jamun (2 Pcs)',
         price: 4.99,
         category: 'dessert',
-        image_url: 'https://images.unsplash.com/photo-1601050690597-df056fb4ce78?w=400&auto=format&fit=crop&q=60',
+        image_url: 'https://images.unsplash.com/photo-1579616235489-cf210b4da67e?w=400&auto=format&fit=crop&q=60',
         description: 'Fried milk dumplings soaked in cardamom sugar syrup.'
       },
       {
@@ -198,7 +198,7 @@ async function setup() {
         name: 'Delhi Samosa Chaat',
         price: 7.99,
         category: 'chaat',
-        image_url: 'https://images.unsplash.com/photo-1601050690597-df056fb4ce78?w=400&auto=format&fit=crop&q=60',
+        image_url: 'https://images.unsplash.com/photo-1606491956689-2ea866880c84?w=400&auto=format&fit=crop&q=60',
         description: 'Crushed samosas topped with spicy chole, sweet yogurt, and chutneys.'
       }
     ];

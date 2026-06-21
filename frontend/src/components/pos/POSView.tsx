@@ -36,6 +36,7 @@ export const POSView: React.FC<POSViewProps> = ({
   // Cart states
   const [cart, setCart] = useState<CartItem[]>([]);
   const [customerName, setCustomerName] = useState('');
+  const [customerPhone, setCustomerPhone] = useState('');
   const [promoInput, setPromoInput] = useState('');
   const [appliedPromo, setAppliedPromo] = useState<PromoCode | null>(null);
   const [promoError, setPromoError] = useState('');
@@ -44,9 +45,10 @@ export const POSView: React.FC<POSViewProps> = ({
   const [recentOrderNum, setRecentOrderNum] = useState('');
 
   // Table selection & checkout payment states
-  const [selectedTableId, setSelectedTableId] = useState('');
+  const [selectedTableIds, setSelectedTableIds] = useState<string[]>([]);
+  const [guestCount, setGuestCount] = useState<number>(1);
   const [showPaymentModal, setShowPaymentModal] = useState(false);
-  const [paymentMethod, setPaymentMethod] = useState<'Cash' | 'Card' | 'UPI'>('Cash');
+  const [paymentMethod, setPaymentMethod] = useState<'Cash' | 'Card' | 'UPI' | 'Razorpay'>('Cash');
   const [transactionRef, setTransactionRef] = useState('');
   const [checkoutProcessing, setCheckoutProcessing] = useState(false);
 
@@ -171,19 +173,19 @@ export const POSView: React.FC<POSViewProps> = ({
       alert('You must open a POS session before sending orders to the kitchen.');
       return;
     }
-    if (!selectedTableId) {
+    if (selectedTableIds.length === 0) {
       alert('Table selection is mandatory to place an order.');
       return;
     }
     const resolvedCustomer = customerName.trim() || 'Guest Customer';
-    onSendToKitchen(cart, resolvedCustomer, appliedPromo, orderNotes, selectedTableId);
+    onSendToKitchen(cart, resolvedCustomer, appliedPromo, orderNotes, selectedTableIds.join(','));
     
     // Clear states
     setCart([]);
     setCustomerName('');
     setAppliedPromo(null);
     setOrderNotes('');
-    setSelectedTableId('');
+    setSelectedTableIds([]);
     alert('Order sent to Kitchen Display System (KDS) and table marked Occupied!');
   };
 
@@ -193,7 +195,7 @@ export const POSView: React.FC<POSViewProps> = ({
       alert('You must open a POS session to proceed to payment.');
       return;
     }
-    if (!selectedTableId) {
+    if (selectedTableIds.length === 0) {
       alert('Table selection is mandatory to proceed to payment.');
       return;
     }
@@ -202,7 +204,7 @@ export const POSView: React.FC<POSViewProps> = ({
 
   const handlePaymentSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (cart.length === 0 || !token || !activeSession || !selectedTableId) return;
+    if (cart.length === 0 || !token || !activeSession || selectedTableIds.length === 0) return;
     setCheckoutProcessing(true);
 
     const resolvedCustomer = customerName.trim() || 'Guest Customer';
@@ -215,7 +217,8 @@ export const POSView: React.FC<POSViewProps> = ({
         unit_price: item.product.price,
         line_total: item.product.price * item.quantity
       })),
-      table_id: selectedTableId,
+      table_id: selectedTableIds.join(','),
+      guest_count: guestCount,
       subtotal: totals.subtotal,
       tax: totals.tax,
       discount_amount: totals.discount,
@@ -238,6 +241,59 @@ export const POSView: React.FC<POSViewProps> = ({
       const orderData = await response.json();
       if (!response.ok) {
         throw new Error(orderData.error || 'Failed to place draft order.');
+      }
+
+      if (paymentMethod === 'Razorpay') {
+        const rzpRes = await fetch('/api/payments/razorpay/order', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
+          body: JSON.stringify({ order_id: orderData.id })
+        });
+        const rzpData = await rzpRes.json();
+        if (!rzpRes.ok) throw new Error(rzpData.error || 'Failed to init Razorpay');
+
+        const options = {
+          key: rzpData.key,
+          amount: rzpData.amount,
+          currency: rzpData.currency,
+          name: 'Odoo Cafe',
+          description: `POS Order #${orderData.order_number}`,
+          order_id: rzpData.razorpay_order_id,
+          handler: async function (response: any) {
+            try {
+              const verifyRes = await fetch('/api/payments/razorpay/verify', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
+                body: JSON.stringify({
+                  order_id: orderData.id,
+                  razorpay_payment_id: response.razorpay_payment_id,
+                  razorpay_order_id: response.razorpay_order_id,
+                  razorpay_signature: response.razorpay_signature
+                })
+              });
+              const verifyData = await verifyRes.json();
+              if (!verifyRes.ok) throw new Error(verifyData.error || 'Verification failed');
+              
+              setCheckoutProcessing(false);
+              setShowPaymentModal(false);
+              setRecentOrderNum(orderData.order_number);
+              setShowCheckoutSuccess(true);
+            } catch (err: any) {
+              alert(err.message || 'Payment Verification Failed');
+              setCheckoutProcessing(false);
+            }
+          },
+          prefill: { name: resolvedCustomer, contact: customerPhone || '' },
+          theme: { color: '#9333ea' }
+        };
+
+        const rzp = new (window as any).Razorpay(options);
+        rzp.on('payment.failed', function (response: any) {
+          alert('Payment failed: ' + response.error.description);
+          setCheckoutProcessing(false);
+        });
+        rzp.open();
+        return;
       }
 
       // 2. Submit payment to record transaction and mark order Paid
@@ -277,7 +333,7 @@ export const POSView: React.FC<POSViewProps> = ({
     setAppliedPromo(null);
     setOrderNotes('');
     setRecentOrderNum('');
-    setSelectedTableId('');
+    setSelectedTableIds([]);
   };
 
 
@@ -296,7 +352,7 @@ export const POSView: React.FC<POSViewProps> = ({
   };
 
   const handleAssignTableFromBooking = (tableId: string) => {
-    setSelectedTableId(tableId);
+    if (!selectedTableIds.includes(tableId)) setSelectedTableIds([...selectedTableIds, tableId]);
     setActiveView('products');
   };
 
@@ -424,11 +480,12 @@ export const POSView: React.FC<POSViewProps> = ({
                         const statusConfig: Record<string, { border: string; bg: string; badge: string; dot: string }> = {
                           Available: { border: 'border-emerald-200 hover:border-emerald-400', bg: 'bg-white', badge: 'bg-emerald-50 text-emerald-700 border-emerald-200', dot: 'bg-emerald-500' },
                           Occupied: { border: 'border-rose-200 hover:border-rose-300', bg: 'bg-rose-50/30', badge: 'bg-rose-50 text-rose-700 border-rose-200', dot: 'bg-rose-500 animate-pulse' },
+                          'Partially Occupied': { border: 'border-orange-200 hover:border-orange-300', bg: 'bg-orange-50/30', badge: 'bg-orange-50 text-orange-700 border-orange-200', dot: 'bg-orange-500 animate-pulse' },
                           Reserved: { border: 'border-amber-200 hover:border-amber-300', bg: 'bg-amber-50/20', badge: 'bg-amber-50 text-amber-700 border-amber-200', dot: 'bg-amber-400' },
                           Maintenance: { border: 'border-slate-200', bg: 'bg-slate-50', badge: 'bg-slate-100 text-slate-500 border-slate-200', dot: 'bg-slate-400' },
                         };
                         const cfg = statusConfig[table.status] || statusConfig.Available;
-                        const isSelected = selectedTableId === table.id;
+                        const isSelected = selectedTableIds.includes(table.id);
 
                         return (
                           <div
@@ -480,6 +537,7 @@ export const POSView: React.FC<POSViewProps> = ({
                                 >
                                   <option value="Available">Available</option>
                                   <option value="Occupied">Occupied</option>
+                                  <option value="Partially Occupied">Partially Occupied</option>
                                   <option value="Reserved">Reserved</option>
                                   <option value="Maintenance">Maintenance</option>
                                 </select>
@@ -655,14 +713,17 @@ export const POSView: React.FC<POSViewProps> = ({
             className="w-full px-2.5 py-1.5 text-xs bg-white border border-[#e2e8f0] rounded-lg focus:outline-none focus:ring-1 focus:ring-odoo focus:border-odoo text-slate-700"
           />
 
-          {/* Floor Seating Table Picker */}
+                    {/* Floor Seating Table Picker */}
           <div className="space-y-1">
             <select
-              value={selectedTableId}
-              onChange={(e) => setSelectedTableId(e.target.value)}
+              value=""
+              onChange={(e) => {
+                const val = e.target.value;
+                if (val && !selectedTableIds.includes(val)) setSelectedTableIds([...selectedTableIds, val]);
+              }}
               className="w-full px-2.5 py-1.5 text-xs bg-white border border-[#e2e8f0] rounded-lg focus:outline-none focus:ring-1 focus:ring-odoo text-slate-700 font-semibold"
             >
-              <option value="">-- Select Table (Required) --</option>
+              <option value="">-- Add Table (Required) --</option>
               {Object.entries(
                 tables.reduce((acc, t) => {
                   const fName = t.floor_name || 'Main Floor';
@@ -676,7 +737,7 @@ export const POSView: React.FC<POSViewProps> = ({
                     <option 
                       key={t.id} 
                       value={t.id}
-                      className={t.status === 'Occupied' ? 'text-red-500 font-medium' : 'text-emerald-600 font-medium'}
+                      className={t.status === 'Occupied' ? 'text-red-500 font-medium' : t.status === 'Partially Occupied' ? 'text-orange-500 font-medium' : 'text-emerald-600 font-medium'}
                     >
                       Table {t.number} ({t.capacity} seats) - {t.status}
                     </option>
@@ -685,20 +746,63 @@ export const POSView: React.FC<POSViewProps> = ({
               ))}
             </select>
 
-            {selectedTableId && (() => {
-              const selectedTable = tables.find(t => t.id === selectedTableId);
-              if (!selectedTable) return null;
-              const statusColors = {
+            {/* Display Selected Tables as Tags */}
+            {selectedTableIds.length > 0 && (
+              <div className="flex flex-wrap gap-1 mt-2">
+                {selectedTableIds.map(tid => {
+                  const tableObj = tables.find(t => t.id === tid);
+                  return (
+                    <div key={tid} className="flex items-center gap-1 bg-odoo text-white text-[10px] px-2 py-1 rounded-md font-bold">
+                      T{tableObj?.number} ({tableObj?.capacity}s)
+                      <button onClick={() => setSelectedTableIds(selectedTableIds.filter(id => id !== tid))} className="ml-1 hover:text-red-200">
+                        <X className="w-3 h-3" />
+                      </button>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+
+            {/* Guest Count Input */}
+            <div className="mt-3">
+              <label className="text-[10px] uppercase tracking-wider font-bold text-slate-500 mb-1 block">Number of Guests</label>
+              <input 
+                type="number" 
+                min="1"
+                value={guestCount}
+                onChange={e => setGuestCount(parseInt(e.target.value) || 1)}
+                className="w-full px-2.5 py-1.5 text-xs bg-white border border-[#e2e8f0] rounded-lg focus:outline-none focus:ring-1 focus:ring-odoo text-slate-700 font-semibold"
+              />
+            </div>
+
+            {selectedTableIds.length > 0 && (() => {
+              const selectedTables = selectedTableIds.map(id => tables.find(t => t.id === id)).filter(Boolean) as SeatingTable[];
+              if (selectedTables.length === 0) return null;
+              
+              const totalSeats = selectedTables.reduce((sum, t) => sum + t.capacity, 0);
+              const anyOccupied = selectedTables.some(t => t.status === 'Occupied' || t.status === 'Partially Occupied');
+              
+              const statusColors: Record<string, string> = {
                 Available: 'bg-emerald-50 text-emerald-700 border-emerald-200',
                 Occupied: 'bg-rose-50 text-rose-700 border-rose-200',
+                'Partially Occupied': 'bg-orange-50 text-orange-700 border-orange-200',
                 Reserved: 'bg-amber-50 text-amber-700 border-amber-200',
                 Maintenance: 'bg-slate-50 text-slate-700 border-slate-200'
               };
-              const color = statusColors[selectedTable.status] || statusColors.Available;
+              const color = anyOccupied ? statusColors.Occupied : statusColors.Available;
               return (
-                <div className={`flex items-center justify-between text-[10px] px-2 py-1.5 border rounded-lg ${color}`}>
-                  <span>Seats: <strong className="font-bold">{selectedTable.capacity}</strong></span>
-                  <span className="font-bold uppercase tracking-wider text-[9px]">{selectedTable.status}</span>
+                <div className={`flex flex-col gap-1 text-[10px] px-2 py-1.5 border rounded-lg mt-2 ${color}`}>
+                  <div className="flex justify-between font-bold">
+                    <span>Selected Tables: {selectedTables.map(t => t.number).join(', ')}</span>
+                    <span className="px-1.5 py-0.5 rounded bg-white/50">{anyOccupied ? 'Occupied/Partial' : 'Available'}</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span>Total Capacity: {totalSeats} seats</span>
+                    <span>Guests: {guestCount}</span>
+                  </div>
+                  {guestCount > totalSeats && (
+                    <div className="text-rose-600 font-bold mt-1">Warning: Guest count exceeds total capacity!</div>
+                  )}
                 </div>
               );
             })()}
@@ -923,9 +1027,9 @@ export const POSView: React.FC<POSViewProps> = ({
                 <div className="bg-slate-900 text-white rounded-xl p-4 text-center">
                   <span className="text-xs text-slate-400 font-medium tracking-wider uppercase">Amount to Pay</span>
                   <div className="text-3xl font-extrabold text-white mt-1">₹{totals.total.toFixed(2)}</div>
-                  {selectedTableId && (
+                  {selectedTableIds.length > 0 && (
                     <span className="inline-block mt-2 px-2 py-0.5 bg-white/10 rounded text-[10px] font-semibold text-slate-300">
-                      Table: {tables.find(t => t.id === selectedTableId)?.number}
+                      Table(s): {selectedTableIds.map(id => tables.find(t => t.id === id)?.number).join(', ')} | Guests: {guestCount}
                     </span>
                   )}
                 </div>

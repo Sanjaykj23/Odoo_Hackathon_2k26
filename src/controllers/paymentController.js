@@ -107,7 +107,9 @@ exports.verifyRazorpayPayment = async (req, res) => {
 
       // Get Customer phone & Table info for ticket
       const custRes = await client.query(`SELECT phone_number FROM customers WHERE id = $1`, [orderData.customer_id]);
-      const tableRes = await client.query(`SELECT table_number FROM tables WHERE id = $1`, [orderData.table_id]);
+      const tableIds = orderData.table_id ? orderData.table_id.split(',') : [];
+      const tableRes = await client.query(`SELECT table_number FROM tables WHERE id = ANY($1)`, [tableIds]);
+      const tableNum = tableRes.rows.map(r => r.table_number).join(', ');
       const shopRes = await client.query(`SELECT name FROM shops WHERE id = $1`, [orderData.shop_id]);
 
       // Get Order Items
@@ -124,7 +126,7 @@ exports.verifyRazorpayPayment = async (req, res) => {
         order_number: orderData.order_number,
         total_amount: orderData.total_amount,
         phone_number: custRes.rows[0]?.phone_number,
-        table_number: tableRes.rows[0]?.table_number,
+        table_number: tableNum,
         shop_name: shopRes.rows[0]?.name,
         shop_id: orderData.shop_id,
         items: itemsRes.rows
@@ -189,8 +191,9 @@ exports.handleCOD = async (req, res) => {
     if (orderUpdate.rows.length === 0) throw new Error('Order not found');
     const orderData = orderUpdate.rows[0];
 
-    const tableRes = await client.query(`SELECT table_number FROM tables WHERE id = $1`, [orderData.table_id]);
-    const tableNum = tableRes.rows[0]?.table_number;
+    const tableIds = orderData.table_id ? orderData.table_id.split(',') : [];
+    const tableRes = await client.query(`SELECT table_number FROM tables WHERE id = ANY($1)`, [tableIds]);
+    const tableNum = tableRes.rows.map(r => r.table_number).join(', ');
 
     await client.query('COMMIT');
 

@@ -7,6 +7,7 @@ import { LoginView } from './components/auth/LoginView';
 import { SessionControl } from './components/pos/SessionControl';
 import { CustomerSelfOrderView } from './components/customer/CustomerSelfOrderView';
 import { CustomerDisplayView } from './components/customer/CustomerDisplayView';
+import { PantryHomeView } from './components/home/PantryHomeView';
 import { Coffee, Server, Clock } from 'lucide-react';
 import { io } from 'socket.io-client';
 
@@ -17,30 +18,26 @@ function App() {
   const [user, setUser] = useState<any | null>(JSON.parse(localStorage.getItem('user') || 'null'));
 
   // Routing Checks
-  const [route, setRoute] = useState<'terminal' | 'customer' | 'customer-display'>('terminal');
-  const [customerTableId, setCustomerTableId] = useState<string | null>(null);
-  const [customerQrToken, setCustomerQrToken] = useState<string | null>(null);
-
-  useEffect(() => {
+  const getInitialRoute = () => {
     const params = new URLSearchParams(window.location.search);
     const path = window.location.pathname;
+    if (params.get('customer') === 'true' || path.startsWith('/customer/')) return 'customer';
+    if (path === '/customer-display' || params.get('display') === 'true') return 'customer-display';
+    return 'terminal';
+  };
 
-    if (params.get('customer') === 'true' || path.startsWith('/customer/')) {
-      setRoute('customer');
-      let tableId = params.get('tableId');
-      let tokenParam = params.get('token');
-      if (path.startsWith('/customer/table/')) {
-        const parts = path.split('/');
-        tableId = parts[3];
-      }
-      setCustomerTableId(tableId);
-      setCustomerQrToken(tokenParam);
-    } else if (path === '/customer-display' || params.get('display') === 'true') {
-      setRoute('customer-display');
-    } else {
-      setRoute('terminal');
+  const getInitialTableId = () => {
+    const params = new URLSearchParams(window.location.search);
+    const path = window.location.pathname;
+    if (path.startsWith('/customer/table/')) {
+      return path.split('/')[3];
     }
-  }, []);
+    return params.get('tableId');
+  };
+
+  const [route, setRoute] = useState<'terminal' | 'customer' | 'customer-display'>(getInitialRoute);
+  const [customerTableId, setCustomerTableId] = useState<string | null>(getInitialTableId);
+  const [customerQrToken, setCustomerQrToken] = useState<string | null>(() => new URLSearchParams(window.location.search).get('token'));
 
   // App-level Shared States
   const [products, setProducts] = useState<Product[]>([]);
@@ -107,6 +104,7 @@ function App() {
     localStorage.removeItem('token');
     localStorage.removeItem('user');
     setActiveView('products');
+    window.location.href = '/';
   };
 
   // On startup: validate stored token immediately to prevent 401 flood
@@ -124,6 +122,17 @@ function App() {
       }
     }).catch(() => {/* backend offline, ignore */});
   }, []); // run once on mount
+
+  // Sync URL with Active View
+  useEffect(() => {
+    if (route !== 'terminal') return;
+    if (!token) {
+      window.history.replaceState({}, '', '/login');
+    } else {
+      const path = activeView === 'products' || activeView === 'booking' ? '/pos' : `/${activeView}`;
+      window.history.replaceState({}, '', path);
+    }
+  }, [activeView, token, route]);
 
   // Load data from Backend API when logged in
   useEffect(() => {
@@ -171,10 +180,12 @@ function App() {
             id: t.id,
             number: t.table_number,
             capacity: t.seats,
+            occupied_seats: t.occupied_seats,
             status: t.status,
             floor_id: t.floor_id,
             floor_name: t.floor_name,
-            qr_token: t.qr_token  // ← include so QR codes work
+            shop_id: t.shop_id,
+            qr_token: t.qr_token
           }));
           setTables(mapped);
         }
@@ -291,8 +302,10 @@ function App() {
                 number: payload.table_number,
                 capacity: payload.seats,
                 status: payload.status,
+                occupied_seats: payload.occupied_seats,
                 floor_id: payload.floor_id,
                 floor_name: payload.floor_name,
+                shop_id: payload.shop_id,
                 qr_token: payload.qr_token  // preserve QR token
               };
               if (prev.some(t => t.id === payload.id)) {
@@ -510,6 +523,9 @@ function App() {
 
   // If not authenticated, display login screen
   if (!token || !user) {
+    if (window.location.pathname === '/' && !window.location.search.includes('customer=')) {
+      return <PantryHomeView />;
+    }
     return <LoginView onLoginSuccess={handleLoginSuccess} />;
   }
 

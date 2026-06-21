@@ -152,7 +152,7 @@ async function sendOrderConfirmation(orderId) {
     console.log(`[WhatsApp] Ticket SVG saved to ${ticketFilePath}`);
 
     // Expose ticket URL (we'll store it in the database orders.ticket_url column)
-    const host = process.env.PUBLIC_URL || `http://localhost:${process.env.PORT || 5000}`;
+    const host = process.env.PUBLIC_URL || `https://app.odoocafe.com`;
     const ticketUrl = `${host}/public/tickets/${ticketFileName}`;
     await pool.query('UPDATE orders SET ticket_url = $1 WHERE id = $2', [ticketUrl, orderId]);
 

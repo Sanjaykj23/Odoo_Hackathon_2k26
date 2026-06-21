@@ -7,6 +7,7 @@ import {
 } from 'lucide-react';
 import type { Product, Category, SeatingTable, PromoCode, Order } from '../../types';
 import { QRCodeSVG } from 'qrcode.react';
+import { AdminAnalyticsView } from './AdminAnalyticsView';
 
 interface AdminViewProps {
   token: string | null;
@@ -37,8 +38,7 @@ export const AdminView: React.FC<AdminViewProps> = ({
   onUpdatePromoCodes,
   setActiveView
 }) => {
-  // Tabs management
-  const [activeTab, setActiveTab] = useState<'products' | 'categories' | 'tables' | 'promos' | 'users' | 'shops' | 'reports'>('products');
+  const [activeTab, setActiveTab] = useState<'analytics' | 'products' | 'categories' | 'tables' | 'promos' | 'users' | 'shops' | 'reports'>('analytics');
 
   // Backend state for Employees & Shops
   const [employees, setEmployees] = useState<any[]>([]);
@@ -68,6 +68,10 @@ export const AdminView: React.FC<AdminViewProps> = ({
   const [editingCategoryId, setEditingCategoryId] = useState<string | null>(null);
   const [editingCategoryColor, setEditingCategoryColor] = useState('');
 
+  // FORM STATES: Add Category Form
+  const [newCategoryName, setNewCategoryName] = useState('');
+  const [newCategoryColor, setNewCategoryColor] = useState('#714B67');
+
   // FORM STATES: Add User Account Form
   const [newUserName, setNewUserName] = useState('');
   const [newUserEmail, setNewUserEmail] = useState('');
@@ -90,6 +94,8 @@ export const AdminView: React.FC<AdminViewProps> = ({
   const [qrModalTable, setQrModalTable] = useState<any | null>(null);
   const [shopTableQrData, setShopTableQrData] = useState<any[]>([]);
 
+  // Admin Shop Selection State
+  const [selectedAdminShopId, setSelectedAdminShopId] = useState<string>('');
 
   // Password reset state
   const [passwordResetUserId, setPasswordResetUserId] = useState<number | null>(null);
@@ -365,6 +371,54 @@ export const AdminView: React.FC<AdminViewProps> = ({
     }
   };
 
+  const handleAddCategory = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!token || !newCategoryName) return;
+
+    try {
+      const response = await fetch('/api/categories', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`
+        },
+        body: JSON.stringify({ 
+          id: newCategoryName.toLowerCase().replace(/[\s_]+/g, '-'),
+          name: newCategoryName,
+          color: newCategoryColor || '#714B67',
+          shop_id: user.shop_id || (shops.length > 0 ? shops[0].id : 1)
+        })
+      });
+      if (response.ok) {
+        setNewCategoryName('');
+        setNewCategoryColor('#714B67');
+      } else {
+        const errData = await response.json();
+        alert(errData.error || 'Failed to add category.');
+      }
+    } catch (err) {
+      console.error('Error adding category:', err);
+    }
+  };
+
+  const handleDeleteCategory = async (id: string) => {
+    if (!token) return;
+    if (!window.confirm('Are you sure you want to delete this category?')) return;
+
+    try {
+      const response = await fetch(`/api/categories/${id}`, {
+        method: 'DELETE',
+        headers: { 'Authorization': `Bearer ${token}` }
+      });
+      if (!response.ok) {
+        const errData = await response.json();
+        alert(errData.error || 'Failed to delete category.');
+      }
+    } catch (err) {
+      console.error('Error deleting category:', err);
+    }
+  };
+
   // Wizard Step 1 → 2: validate shop details and compute table count
   const handleWizardStep1 = (e: React.FormEvent) => {
     e.preventDefault();
@@ -459,12 +513,12 @@ export const AdminView: React.FC<AdminViewProps> = ({
       return;
     }
 
-    // Role-enforcement: SuperAdmin creates Admin; Admin creates Employee/Chef
-    const roleToSend = user.role === 'SuperAdmin' ? 'Admin' : newUserRole;
+    // Role-enforcement: SuperAdmin creates selected role; Admin creates Employee/Chef
+    const roleToSend = newUserRole; // SuperAdmin can select Admin/Employee/Chef, Admin can only select Employee/Chef
     const shopIdToSend = user.role === 'SuperAdmin' ? parseInt(newUserShopId) : user.shop_id;
 
     if (user.role === 'SuperAdmin' && !shopIdToSend) {
-      setUserError('Please select a shop to assign this Admin.');
+      setUserError('Please select a shop to assign this account.');
       return;
     }
 
@@ -582,12 +636,13 @@ export const AdminView: React.FC<AdminViewProps> = ({
 
   // Compile active tab controllers
   const tabItems = [
+    { id: 'analytics', label: 'Executive Dashboard', icon: TrendingUp },
     { id: 'products', label: 'Product Catalog', icon: Coffee },
     { id: 'categories', label: 'Category Mappings', icon: Utensils },
     { id: 'tables', label: 'Table Arrangements', icon: Calendar },
     { id: 'promos', label: 'Promos & Codes', icon: Percent },
     { id: 'users', label: 'User & Employees', icon: Users },
-    { id: 'reports', label: 'Reports & Analytics', icon: TrendingUp },
+    { id: 'reports', label: 'Reports Export', icon: DollarSign },
   ];
 
   if (user?.role === 'SuperAdmin') {
@@ -671,10 +726,15 @@ export const AdminView: React.FC<AdminViewProps> = ({
       {/* DATA SHEETS CONTAINER */}
       <div className="bg-white border border-[#e2e8f0] rounded-2xl overflow-hidden shadow-sm">
         
+        {/* ANALYTICS DASHBOARD */}
+        {activeTab === 'analytics' && (
+          <AdminAnalyticsView orders={orders} shops={shops} user={user} />
+        )}
+
         {/* PRODUCTS SHEET */}
         {activeTab === 'products' && (
           <div className="divide-y divide-[#e2e8f0]">
-            <form onSubmit={handleAddProduct} className="p-5 bg-slate-50/50 grid grid-cols-1 md:grid-cols-5 gap-3.5 items-end">
+            <form onSubmit={handleAddProduct} className="p-5 bg-slate-50/50 grid grid-cols-1 md:grid-cols-6 gap-3.5 items-end">
               <div>
                 <label className="block text-[10px] uppercase tracking-wider font-bold text-slate-500 mb-1">Product Name</label>
                 <input
@@ -721,11 +781,21 @@ export const AdminView: React.FC<AdminViewProps> = ({
                   className="w-full text-xs px-3 py-2 bg-white border border-[#e2e8f0] rounded-xl focus:outline-none focus:ring-1 focus:ring-purple-500 focus:border-purple-500 text-slate-800"
                 />
               </div>
+              <div>
+                <label className="block text-[10px] uppercase tracking-wider font-bold text-slate-500 mb-1">Image URL</label>
+                <input
+                  type="url"
+                  placeholder="https://..."
+                  value={newProdImage}
+                  onChange={(e) => setNewProdImage(e.target.value)}
+                  className="w-full text-xs px-3 py-2 bg-white border border-[#e2e8f0] rounded-xl focus:outline-none focus:ring-1 focus:ring-purple-500 focus:border-purple-500 text-slate-800"
+                />
+              </div>
               <button
                 type="submit"
                 className="w-full text-xs py-2 bg-slate-800 hover:bg-slate-700 text-white font-bold rounded-xl transition-all shadow-sm flex items-center justify-center gap-1.5 cursor-pointer"
               >
-                <Plus className="w-3.5 h-3.5" /> Add Product
+                <Plus className="w-3.5 h-3.5" /> Add
               </button>
             </form>
 
@@ -860,15 +930,25 @@ export const AdminView: React.FC<AdminViewProps> = ({
                               </button>
                             </div>
                           ) : (
-                            <button
-                              onClick={() => {
-                                setEditingCategoryId(cat.id);
-                                setEditingCategoryColor(cat.color);
-                              }}
-                              className="text-xs font-semibold text-purple-700 hover:underline flex items-center gap-1 ml-auto cursor-pointer"
-                            >
-                              Change Color
-                            </button>
+                            <div className="flex justify-end gap-2">
+                              <button
+                                onClick={() => {
+                                  setEditingCategoryId(cat.id);
+                                  setEditingCategoryColor(cat.color);
+                                }}
+                                className="text-xs font-semibold text-purple-700 hover:underline flex items-center gap-1 cursor-pointer"
+                              >
+                                Edit Color
+                              </button>
+                              {user?.role !== 'Employee' && (
+                                <button
+                                  onClick={() => handleDeleteCategory(cat.id)}
+                                  className="text-xs font-semibold text-red-500 hover:underline flex items-center gap-1 cursor-pointer"
+                                >
+                                  Delete
+                                </button>
+                              )}
+                            </div>
                           )}
                         </td>
                       </tr>
@@ -877,20 +957,58 @@ export const AdminView: React.FC<AdminViewProps> = ({
                 </table>
               </div>
 
-              <div className="bg-slate-50 border border-[#e2e8f0] p-5 rounded-xl space-y-3">
-                <h3 className="font-bold text-slate-800 text-sm">Theme Settings Overview</h3>
-                <p className="text-slate-500 text-xs leading-relaxed">
-                  These category colors set the primary highlights and UI identifiers used across the terminal screens.
-                  Using a consistent color palette ensures visual harmony. Choose low-saturation palettes that blend cleanly with the light theme.
-                </p>
-                <div className="p-3 bg-white border border-[#e2e8f0] rounded-lg">
-                  <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Accent Palette Hint</span>
-                  <div className="flex gap-2 mt-2">
-                    <span className="w-6 h-6 rounded-full bg-[#714B67]" title="Odoo Aubergine"/>
-                    <span className="w-6 h-6 rounded-full bg-[#0369a1]" title="Sky Corporate"/>
-                    <span className="w-6 h-6 rounded-full bg-[#15803d]" title="Forest Base"/>
+              <div className="space-y-4">
+                <div className="bg-slate-50 border border-[#e2e8f0] p-5 rounded-xl space-y-3">
+                  <h3 className="font-bold text-slate-800 text-sm">Theme Settings Overview</h3>
+                  <p className="text-slate-500 text-xs leading-relaxed">
+                    These category colors set the primary highlights and UI identifiers used across the terminal screens.
+                    Using a consistent color palette ensures visual harmony. Choose low-saturation palettes that blend cleanly with the light theme.
+                  </p>
+                  <div className="p-3 bg-white border border-[#e2e8f0] rounded-lg">
+                    <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Accent Palette Hint</span>
+                    <div className="flex gap-2 mt-2">
+                      <span className="w-6 h-6 rounded-full bg-[#714B67]" title="Odoo Aubergine"/>
+                      <span className="w-6 h-6 rounded-full bg-[#0369a1]" title="Sky Corporate"/>
+                      <span className="w-6 h-6 rounded-full bg-[#15803d]" title="Forest Base"/>
+                    </div>
                   </div>
                 </div>
+
+                {user?.role !== 'Employee' && (
+                  <form onSubmit={handleAddCategory} className="bg-slate-50 border border-[#e2e8f0] p-5 rounded-xl space-y-3">
+                    <h3 className="font-bold text-slate-800 text-sm flex items-center gap-2">
+                      <Plus className="w-4 h-4 text-purple-600" /> Add New Category
+                    </h3>
+                    <div className="flex gap-3 items-end">
+                      <div className="flex-1">
+                        <label className="block text-[10px] uppercase tracking-wider font-bold text-slate-500 mb-1">Category Name</label>
+                        <input
+                          type="text"
+                          required
+                          placeholder="e.g. Desserts"
+                          value={newCategoryName}
+                          onChange={(e) => setNewCategoryName(e.target.value)}
+                          className="w-full text-xs px-3 py-2 bg-white border border-[#e2e8f0] rounded-xl focus:outline-none focus:ring-1 focus:ring-purple-500 text-slate-800"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-[10px] uppercase tracking-wider font-bold text-slate-500 mb-1">Theme Color</label>
+                        <input
+                          type="color"
+                          value={newCategoryColor}
+                          onChange={(e) => setNewCategoryColor(e.target.value)}
+                          className="w-10 h-9 rounded-xl cursor-pointer border border-[#e2e8f0] p-0 bg-white"
+                        />
+                      </div>
+                      <button
+                        type="submit"
+                        className="h-9 px-4 bg-purple-600 hover:bg-purple-700 text-white font-bold text-xs rounded-xl shadow-md transition-all cursor-pointer"
+                      >
+                        Add
+                      </button>
+                    </div>
+                  </form>
+                )}
               </div>
             </div>
           </div>
@@ -937,8 +1055,34 @@ export const AdminView: React.FC<AdminViewProps> = ({
               </div>
             )}
 
+            {user?.role === 'SuperAdmin' && (
+              <div className="mb-4 flex items-center gap-3">
+                <label className="text-sm font-bold text-slate-700">Select Branch/Shop:</label>
+                <select
+                  value={selectedAdminShopId}
+                  onChange={(e) => setSelectedAdminShopId(e.target.value)}
+                  className="bg-white border border-slate-200 text-slate-700 text-sm rounded-lg focus:ring-purple-500 focus:border-purple-500 block p-2 font-semibold"
+                >
+                  <option value="">-- View All Tables --</option>
+                  {shops.map(shop => (
+                    <option key={shop.id} value={shop.id}>{shop.name}</option>
+                  ))}
+                </select>
+              </div>
+            )}
+
             <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-4">
-              {tables.map(table => {
+              {tables
+                .filter(t => {
+                  if (user?.role === 'SuperAdmin' && selectedAdminShopId) {
+                    return t.shop_id?.toString() === selectedAdminShopId;
+                  }
+                  if (user?.role !== 'SuperAdmin' && user?.shop_id) {
+                    return t.shop_id === user.shop_id;
+                  }
+                  return true;
+                })
+                .map(table => {
                 const statusColors: Record<string, string> = {
                   'Occupied': 'border-red-200 bg-red-50 text-red-700',
                   'Reserved': 'border-amber-200 bg-amber-50 text-amber-700',
@@ -955,7 +1099,12 @@ export const AdminView: React.FC<AdminViewProps> = ({
                     <div className="flex justify-between items-start">
                       <div>
                         <span className="text-sm font-extrabold text-slate-800">T-{table.number}</span>
-                        <p className="text-[9px] text-slate-400">{table.capacity} seats</p>
+                        <p className="text-[9px] text-slate-400">
+                          {table.status === 'Occupied' || table.status === 'Reserved' 
+                            ? `${(table as any).occupied_seats || table.capacity}/${table.capacity} occupied` 
+                            : `${(table as any).occupied_seats || 0}/${table.capacity} occupied`
+                          }
+                        </p>
                       </div>
                       <span className={`text-[9px] font-bold px-1.5 py-0.5 rounded-full border ${statusColors[table.status] || statusColors['Available']}`}>
                         {table.status}
@@ -1196,11 +1345,13 @@ export const AdminView: React.FC<AdminViewProps> = ({
                     <div>
                       <label className="block text-[10px] uppercase tracking-wider font-bold text-slate-500 mb-1">Account Role</label>
                       <select
-                        disabled
-                        value="Admin"
-                        className="w-full text-xs px-3 py-2 bg-slate-100 border border-[#e2e8f0] rounded-xl text-slate-500"
+                        value={newUserRole}
+                        onChange={(e) => setNewUserRole(e.target.value)}
+                        className="w-full text-xs px-3 py-2 bg-white border border-[#e2e8f0] rounded-xl focus:outline-none focus:ring-1 focus:ring-purple-500 focus:border-purple-500 text-slate-800"
                       >
                         <option value="Admin">Shop Admin</option>
+                        <option value="Employee">Cashier (Employee)</option>
+                        <option value="Chef">Kitchen Chef</option>
                       </select>
                     </div>
                     <div>

@@ -334,14 +334,14 @@ router.get('/tables', auth.verifyToken, async (req, res) => {
     let result;
     if (shopId) {
       result = await pool.query(
-        `SELECT t.*, f.name as floor_name FROM tables t 
+        `SELECT t.*, f.name as floor_name, f.shop_id FROM tables t 
          JOIN floors f ON t.floor_id = f.id 
          WHERE f.shop_id = $1 ORDER BY t.table_number`,
         [shopId]
       );
     } else {
       result = await pool.query(
-        `SELECT t.*, f.name as floor_name FROM tables t 
+        `SELECT t.*, f.name as floor_name, f.shop_id FROM tables t 
          JOIN floors f ON t.floor_id = f.id ORDER BY t.table_number`
       );
     }
@@ -750,6 +750,33 @@ router.post('/orders/:id/pay', auth.verifyToken, async (req, res) => {
 // ==========================================
 // 9. PUBLIC CUSTOMER SELF-ORDERING ROUTES
 // ==========================================
+
+// Get all shops and their real-time table statuses
+router.get('/public/shops/status', async (req, res) => {
+  try {
+    const shopsRes = await pool.query('SELECT id, name, address, phone FROM shops WHERE is_active = true');
+    const shops = shopsRes.rows;
+
+    const tablesRes = await pool.query(`
+      SELECT t.id, t.table_number, t.seats, t.status, t.qr_token, f.shop_id 
+      FROM tables t 
+      JOIN floors f ON t.floor_id = f.id
+    `);
+    const tables = tablesRes.rows;
+
+    const result = shops.map(shop => {
+      return {
+        ...shop,
+        tables: tables.filter(t => t.shop_id === shop.id)
+      };
+    });
+
+    res.json(result);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 router.get('/public/table/:qrToken', async (req, res) => {
   const { qrToken } = req.params;
 
@@ -792,7 +819,7 @@ router.get('/public/table/:qrToken', async (req, res) => {
         id: tableInfo.id,
         number: tableInfo.table_number,
         seats: tableInfo.seats,
-        occupied_seats: tableInfo.occupied_seats,
+        occupied_seats: 0,
         status: tableInfo.status,
         qr_token: tableInfo.qr_token
       },
@@ -962,7 +989,7 @@ router.post('/public/tables/:qr_token/reserve', async (req, res) => {
 
     // Check capacity
     const requestedSeats = parseInt(guest_count);
-    const availableSeats = table.seats - (table.occupied_seats || 0);
+    const availableSeats = table.seats;
 
     if (requestedSeats > availableSeats) {
       await client.query('ROLLBACK');
@@ -985,8 +1012,8 @@ router.post('/public/tables/:qr_token/reserve', async (req, res) => {
 
     // Set table status to Occupied and increment occupied_seats
     const updatedTable = await client.query(
-      "UPDATE tables SET status = 'Occupied', occupied_seats = occupied_seats + $1 WHERE id = $2 RETURNING *",
-      [requestedSeats, table.id]
+      "UPDATE tables SET status = 'Occupied' WHERE id = $1 RETURNING *",
+      [table.id]
     );
 
     await client.query('COMMIT');
@@ -1030,7 +1057,7 @@ router.post('/public/tables/:table_id/end-session', async (req, res) => {
 
     // Set table status back to Available and reset occupied seats
     const updatedTable = await client.query(
-      "UPDATE tables SET status = 'Available', occupied_seats = 0 WHERE id = $1 RETURNING *",
+      "UPDATE tables SET status = 'Available' WHERE id = $1 RETURNING *",
       [table.id]
     );
 

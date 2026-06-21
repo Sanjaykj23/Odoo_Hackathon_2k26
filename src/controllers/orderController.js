@@ -107,8 +107,8 @@ const createOrder = async (req, res) => {
     const orderQuery = `
       INSERT INTO orders (
         id, order_number, shop_id, session_id, employee_id, customer_id, table_id, 
-        subtotal, tax, discount_amount, total_amount, payment_method, status, kds_status, notes, customer_name
-      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, 'To Cook', $14, $15)
+        subtotal, tax, discount_amount, total_amount, payment_method, status, kds_status, notes, customer_name, guest_count
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, 'To Cook', $14, $15, $16)
       RETURNING *
     `;
     const orderValues = [
@@ -126,7 +126,8 @@ const createOrder = async (req, res) => {
       payment_method || null,
       status || 'Draft',
       notes || null,
-      customer_name || null
+      customer_name || null,
+      req.body.guest_count || 1
     ];
 
     const orderRes = await client.query(orderQuery, orderValues);
@@ -149,15 +150,26 @@ const createOrder = async (req, res) => {
     }
 
     // Update table status in database and fetch table details
+    let tblRes = { rows: [] };
     if (table_id) {
-      await client.query("UPDATE tables SET status = 'Occupied' WHERE id = $1", [table_id]);
+      const tableIds = table_id.split(',');
+      const guestCount = req.body.guest_count || 1;
+      
+      const capRes = await client.query('SELECT SUM(seats) as total_cap FROM tables WHERE id = ANY($1)', [tableIds]);
+      const totalCap = parseInt(capRes.rows[0].total_cap) || 4;
+      
+      const newStatus = guestCount < totalCap ? 'Partially Occupied' : 'Occupied';
+      
+      // Update status
+      await client.query("UPDATE tables SET status = $1 WHERE id = ANY($2)", [newStatus, tableIds]);
+      
+      tblRes = await client.query(
+        `SELECT t.*, f.name as floor_name FROM tables t 
+         JOIN floors f ON t.floor_id = f.id 
+         WHERE t.id = ANY($1)`,
+        [tableIds]
+      );
     }
-    const tblRes = await client.query(
-      `SELECT t.*, f.name as floor_name FROM tables t 
-       JOIN floors f ON t.floor_id = f.id 
-       WHERE t.id = $1`,
-      [table_id]
-    );
 
     await client.query('COMMIT');
 
@@ -176,7 +188,7 @@ const createOrder = async (req, res) => {
       const io = socketUtil.getIO();
       io.to(`branch_${targetShopId}_kitchen`).emit('NEW_KITCHEN_TICKET', formattedOrder);
       io.to(`branch_${targetShopId}_all`).emit('TABLES_UPDATED', {
-        tableIds: table_id ? [table_id] : [],
+        tableIds: table_id ? table_id.split(',') : [],
         status: 'Occupied'
       });
     } catch (wsErr) {
@@ -282,7 +294,8 @@ const editOrder = async (req, res) => {
       if (status === 'Paid') {
         const orderTableId = table_id || existingOrder.table_id;
         if (orderTableId) {
-          await pool.query("UPDATE tables SET status = 'Available' WHERE id = $1", [orderTableId]);
+          const tableIds = orderTableId.split(',');
+          await pool.query("UPDATE tables SET status = 'Available' WHERE id = ANY($1)", [tableIds]);
         }
 
         // Broadcast PAYMENT_SUCCESSFUL to customer display and TABLES_UPDATED to all
@@ -333,16 +346,19 @@ const deleteOrder = async (req, res) => {
       await client.query('DELETE FROM orders WHERE id = $1', [id]);
       
       if (order.table_id) {
-        await client.query("UPDATE tables SET status = 'Available' WHERE id = $1", [order.table_id]);
+        const tableIds = order.table_id.split(',');
+        await client.query("UPDATE tables SET status = 'Available' WHERE id = ANY($1)", [tableIds]);
         const tblRes = await client.query(
           `SELECT t.*, f.name as floor_name FROM tables t 
            JOIN floors f ON t.floor_id = f.id 
-           WHERE t.id = $1`,
-          [order.table_id]
+           WHERE t.id = ANY($1)`,
+          [tableIds]
         );
-        if (tblRes.rows.length > 0) {
-          sse.broadcast('TABLE_UPDATED', tblRes.rows[0]);
-        }
+        const io = socketUtil.getIO();
+        io.to(`branch_${req.user.shop_id}_all`).emit('TABLES_UPDATED', {
+          tableIds,
+          status: 'Available'
+        });
       }
       
       await client.query('COMMIT');
@@ -370,23 +386,20 @@ const listOrders = async (req, res) => {
     if (req.user.role === 'SuperAdmin') {
       if (shopId) {
         result = await pool.query(
-          `SELECT o.*, t.table_number FROM orders o 
-           LEFT JOIN tables t ON o.table_id = t.id 
+          `SELECT o.*, (SELECT string_agg(t.table_number::text, ', ') FROM tables t WHERE t.id::text = ANY(string_to_array(o.table_id, ','))) as table_number FROM orders o 
            WHERE o.shop_id = $1 ORDER BY o.created_at DESC`,
           [shopId]
         );
       } else {
         result = await pool.query(
-          `SELECT o.*, t.table_number FROM orders o 
-           LEFT JOIN tables t ON o.table_id = t.id 
+          `SELECT o.*, (SELECT string_agg(t.table_number::text, ', ') FROM tables t WHERE t.id::text = ANY(string_to_array(o.table_id, ','))) as table_number FROM orders o 
            ORDER BY o.created_at DESC`
         );
       }
     } else {
       // Admins, Employees, Chefs can only list their own shop's orders
       result = await pool.query(
-        `SELECT o.*, t.table_number FROM orders o 
-         LEFT JOIN tables t ON o.table_id = t.id 
+        `SELECT o.*, (SELECT string_agg(t.table_number::text, ', ') FROM tables t WHERE t.id::text = ANY(string_to_array(o.table_id, ','))) as table_number FROM orders o 
          WHERE o.shop_id = $1 ORDER BY o.created_at DESC`,
         [req.user.shop_id]
       );
@@ -427,7 +440,8 @@ const listOrders = async (req, res) => {
         customer: order.customer_name || 'Guest',
         discount: parseFloat(order.discount_amount),
         notes: order.notes,
-        tableNumber: order.table_number ? parseInt(order.table_number) : undefined
+        tableNumber: order.table_number ? parseInt(order.table_number) : undefined,
+        shop_id: order.shop_id
       });
     }
 
@@ -556,8 +570,7 @@ const toggleItemFulfillment = async (req, res) => {
 
 const fetchFullOrder = async (orderId) => {
   const orderRes = await pool.query(
-    `SELECT o.*, t.table_number FROM orders o 
-     LEFT JOIN tables t ON o.table_id = t.id 
+    `SELECT o.*, (SELECT string_agg(t.table_number::text, ', ') FROM tables t WHERE t.id::text = ANY(string_to_array(o.table_id, ','))) as table_number FROM orders o 
      WHERE o.id = $1`,
     [orderId]
   );

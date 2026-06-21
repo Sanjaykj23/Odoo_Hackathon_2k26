@@ -35,6 +35,7 @@ export interface Order {
   discount: number; // total discount in currency
   notes?: string;
   tableNumber?: number;
+  shop_id?: number;
 }
 
 
@@ -42,9 +43,11 @@ export interface SeatingTable {
   id: string;
   number: number;
   capacity: number;
-  status: 'Available' | 'Occupied' | 'Reserved' | 'Maintenance';
+  occupied_seats?: number;
+  status: 'Available' | 'Occupied' | 'Partially Occupied' | 'Reserved' | 'Maintenance';
   floor_id?: number;
   floor_name?: string;
+  shop_id?: number;
   qr_token?: string;  // the unique QR scan token
 }
 

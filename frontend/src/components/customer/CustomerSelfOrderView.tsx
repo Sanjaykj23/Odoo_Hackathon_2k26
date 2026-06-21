@@ -835,7 +835,14 @@ export const CustomerSelfOrderView: React.FC<CustomerSelfOrderViewProps> = ({ ta
                   </div>
                   <div className="p-2.5 space-y-1 flex-1 flex flex-col justify-between">
                     <div>
-                      <h4 className="text-xs font-bold text-slate-800 line-clamp-1">{product.name}</h4>
+                      <div className="flex items-start justify-between gap-1">
+                        <h4 className="text-xs font-bold text-slate-800 line-clamp-1">{product.name}</h4>
+                        {product.popularity >= 4 && (
+                          <span className="px-1 py-0.5 rounded bg-orange-100 text-orange-600 text-[8px] font-black tracking-widest border border-orange-200 whitespace-nowrap">
+                            🔥 HOT
+                          </span>
+                        )}
+                      </div>
                       <span className="text-[9px] text-slate-400 uppercase tracking-wider font-semibold">{product.category}</span>
                     </div>
                     <div className="flex items-center justify-between pt-1">

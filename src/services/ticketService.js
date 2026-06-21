@@ -62,7 +62,7 @@ exports.generateAndSendTicket = async (orderData) => {
     
     // 2. Construct public URL
     // Require PUBLIC_URL to be set in .env using ngrok
-    const publicUrl = process.env.PUBLIC_URL || 'http://localhost:5000';
+    const publicUrl = process.env.PUBLIC_URL || 'https://app.odoocafe.com';
     const ticketUrl = `${publicUrl}/public/tickets/${fileName}`;
 
     // 3. Send WhatsApp
